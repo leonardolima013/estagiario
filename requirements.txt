@@ -1,0 +1,9 @@
+python-dotenv==1.0.1
+psycopg[binary]==3.3.5
+sqlparse==0.5.1
+textual==0.86.3
+pytest==9.1.1
+pytest-asyncio==1.4.0
+anthropic==1.5.0
+pyfiglet==1.0.4
+mcp==2.2.0

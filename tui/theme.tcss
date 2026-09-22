@@ -1,0 +1,285 @@
+/* Paleta "Abismo & Neon" — SPEC.md §11, revisão v3: azul e roxo neon claros
+   sobre fundo preto (era laranja/âmbar na v2). */
+
+$background: #000000;
+$surface: #0A0A1F;
+$border: #2B1B4A;
+$text: #C7C7E8;
+$text-muted: #7A7AA6;
+$accent-ai: #4FD1FF;
+$accent-user: #E081FA;
+$accent-tool: #6C4FF5;
+$accent-warning: #FFB84D;
+
+/* Cor por id de peça (tui/swatches.py é a fonte de verdade em runtime — DataTable
+   não lê variável .tcss por célula; isto aqui é documentação/consistência). */
+$part-1: #2AB7CA;
+$part-2: #4C6EF5;
+$part-3: #37B24D;
+$part-4: #F06595;
+$part-5: #845EF7;
+$part-6: #15AABF;
+$part-7: #94D82D;
+$part-8: #E64980;
+
+Screen {
+    background: $background;
+    color: $text;
+}
+
+Header {
+    background: $surface;
+    color: $accent-ai;
+}
+
+Footer {
+    background: $surface;
+    color: $text-muted;
+}
+
+Select {
+    background: $surface;
+    color: $text;
+    border: solid $border;
+}
+
+Select:focus {
+    border: solid $accent-user;
+}
+
+DataTable {
+    background: $surface;
+    color: $text;
+    border: solid $border;
+}
+
+DataTable > .datatable--header {
+    background: $surface;
+    color: $accent-ai;
+    text-style: bold;
+}
+
+Input {
+    background: $surface;
+    color: $text;
+    border: solid $border;
+}
+
+Input:focus {
+    border: solid $accent-user;
+}
+
+TextArea {
+    background: $surface;
+    color: $text;
+    border: solid $border;
+}
+
+Button {
+    background: $surface;
+    color: $text;
+    border: solid $border;
+}
+
+Button:hover {
+    background: $accent-tool;
+    color: $text;
+}
+
+Button.-primary {
+    background: $accent-user;
+    color: $background;
+}
+
+.panel-title {
+    color: $accent-ai;
+    text-style: bold;
+    padding: 1 0 0 0;
+}
+
+.panel-explicacao {
+    color: $text-muted;
+    padding: 0 0 1 0;
+}
+
+.status-processando {
+    color: $accent-tool;
+    text-style: bold;
+}
+
+.error-message {
+    color: $accent-warning;
+    text-style: bold;
+}
+
+.avisos-web-log {
+    height: auto;
+    max-height: 10;
+    border: solid $accent-tool;
+    color: $accent-tool;
+    margin: 1 0;
+}
+
+Collapsible {
+    background: $surface;
+    border: solid $border;
+}
+
+CollapsibleTitle {
+    color: $accent-ai;
+}
+
+.registro-final {
+    background: $surface;
+    border: solid $accent-ai;
+    padding: 1;
+}
+
+.secao-titulo {
+    color: $accent-ai;
+    text-style: bold;
+    padding: 1 0 0 0;
+}
+
+Cabecalho {
+    dock: top;
+    height: auto;
+    width: 100%;
+    background: $background;
+    padding: 1 0 1 2;
+    border-bottom: solid $border;
+}
+
+#cabecalho-banner {
+    width: 100%;
+    text-align: left;
+}
+
+#cabecalho-subtitulo {
+    width: 100%;
+    text-align: left;
+    color: $text-muted;
+}
+
+IntervencaoScreen {
+    align: center middle;
+    background: #000000 80%;
+}
+
+#intervencao-modal {
+    width: 90%;
+    max-width: 110;
+    max-height: 90%;
+    padding: 1 2;
+    background: $surface;
+    border: solid $accent-user;
+    overflow-y: auto;
+}
+
+.intervencao-titulo {
+    color: $accent-user;
+    text-style: bold;
+    padding: 0 0 1 0;
+}
+
+.intervencao-contexto {
+    color: $text;
+    border: solid $border;
+    padding: 1;
+    height: auto;
+    max-height: 10;
+    overflow-y: auto;
+}
+
+.intervencao-status {
+    color: $accent-tool;
+    height: auto;
+    padding: 1 0;
+}
+
+#intervencao-regra-editor {
+    border: solid $accent-ai;
+    padding: 1;
+    height: auto;
+}
+
+#intervencao-regra-editor TextArea {
+    min-height: 4;
+    height: 5;
+}
+
+#intervencao-acoes {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+#intervencao-resposta {
+    min-height: 3;
+    height: 4;
+}
+
+#intervencao-modal > Input {
+    height: 3;
+}
+
+#intervencao-acoes {
+    dock: bottom;
+    width: 100%;
+    height: 3;
+    background: $surface;
+    layer: overlay;
+}
+
+#intervencao-modal {
+    padding-bottom: 4;
+}
+
+#intervencao-modal {
+    height: 90%;
+    padding-bottom: 1;
+}
+
+#intervencao-conteudo {
+    height: 1fr;
+    overflow-y: auto;
+}
+
+#intervencao-acoes {
+    dock: none;
+    width: 100%;
+    height: 3;
+    background: $surface;
+}
+
+#input-iteracoes {
+    width: 24;
+}
+
+.loop-controles {
+    height: auto;
+    padding: 1 0;
+}
+
+#loop-progress {
+    width: 100%;
+    margin: 1 0;
+}
+
+#loop-status {
+    height: auto;
+    color: $accent-tool;
+    text-style: bold;
+}
+
+#loop-contadores,
+#loop-arquivos {
+    height: auto;
+    padding: 1 0;
+}
+
+.loop-log {
+    height: 8;
+    border: solid $accent-tool;
+    color: $text;
+    margin: 1 0;
+}
