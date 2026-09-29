@@ -6,7 +6,10 @@ from arbitration.arbitrar import arbitrar_campo
 from partitioning.particionar import particionar_grupo
 from tools.group_fetch import buscar_grupo, resolver_brand_id
 
-_RUN_LLM_TESTS = os.environ.get("ESTAGIARIO_RUN_LLM_TESTS") == "1"
+_RUN_LLM_TESTS = (
+    os.environ.get("ESTAGIARIO_RUN_LLM_TESTS") == "1"
+    and bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+)
 _RUN_DB_TESTS = os.environ.get("ESTAGIARIO_RUN_DB_TESTS") == "1"
 _SKIP_REASON = (
     "Teste de integração real (DB + chamada de API à Anthropic) — desligado por padrão, "

@@ -8,10 +8,9 @@ import re
 
 from arbitration.models import DecisaoCampo
 from tools.group_fetch import RegistroCatalogPart
-from tools.reliability import buscar_fonte_atual, nivel_confiabilidade
+from tools.reliability import ORDEM_CONFIABILIDADE, buscar_fonte_atual, nivel_confiabilidade
 
 _ESPACOS_RE = re.compile(r"\s+")
-_NIVEL_PARA_ORDEM = {"alta": 3, "media": 2, "baixa": 1, None: 0}
 
 
 def _normalizar_linhas(texto: str | None) -> list[str]:
@@ -47,7 +46,7 @@ def arbitrar_application(
 
     def ordem(registro: RegistroCatalogPart) -> int:
         fonte = buscar_fonte(registro.id, "application")
-        return -_NIVEL_PARA_ORDEM[calcular_nivel_confiabilidade(fonte, brand_id)]
+        return -ORDEM_CONFIABILIDADE[calcular_nivel_confiabilidade(fonte, brand_id)]
 
     ordenados = sorted(registros, key=ordem)
 

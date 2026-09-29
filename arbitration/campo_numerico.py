@@ -15,11 +15,15 @@ from db.rule_store import RuleStore
 from llm.provider import LLMProvider
 from partitioning.heuristics import sinal_item_distinto
 from tools.group_fetch import RegistroCatalogPart
-from tools.reliability import FonteCampo, buscar_fonte_atual, nivel_confiabilidade
+from tools.reliability import (
+    ORDEM_CONFIABILIDADE,
+    FonteCampo,
+    buscar_fonte_atual,
+    nivel_confiabilidade,
+)
 
 _CAMPOS_MAGNITUDE = frozenset({"width", "depth", "height", "net_weight", "gross_weight"})
 _CAMPOS_CATEGORICOS = frozenset({"ncm", "barcode", "born_at", "deprecated_at"})
-_NIVEL_PARA_ORDEM = {"alta": 3, "media": 2, "baixa": 1, None: 0}
 
 _JSON_SCHEMA = {
     "type": "object",
@@ -67,11 +71,11 @@ def _vencedor_por_confiabilidade(
         nivel = calcular_nivel(fonte, brand_id)
         niveis.append((registro, nivel))
 
-    melhor_ordem = max(_NIVEL_PARA_ORDEM[nivel] for _, nivel in niveis)
+    melhor_ordem = max(ORDEM_CONFIABILIDADE[nivel] for _, nivel in niveis)
     if melhor_ordem == 0:
         return None
 
-    candidatos_no_topo = [(r, n) for r, n in niveis if _NIVEL_PARA_ORDEM[n] == melhor_ordem]
+    candidatos_no_topo = [(r, n) for r, n in niveis if ORDEM_CONFIABILIDADE[n] == melhor_ordem]
     valores_no_topo = {getattr(r, campo) for r, _ in candidatos_no_topo if getattr(r, campo) is not None}
     if len(valores_no_topo) != 1:
         return None

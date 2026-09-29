@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Callable
 
+from arbitration.nome import arbitrar_nome_recuperacao
+from arbitration.provedor_informacao import arbitrar_por_provedor
 from db.rule_store import RuleStore
 from llm.provider import LLMProvider
 from loop.tracing import TraceSink
@@ -24,7 +26,6 @@ from sql_generation.models import DecisaoMerge, GrupoSinalizado
 from sql_generation.montar_decisao import montar_decisao_merge
 from tools.fk_introspection import FkDependency
 from tools.group_fetch import RegistroCatalogPart, buscar_grupo as _buscar_grupo_real
-from verification.mcp_playwright_agent import verificar_nomenclatura_peca
 
 
 @dataclass(frozen=True)
@@ -45,7 +46,7 @@ def executar_caso(
     threshold_divergencia: float = 0.15,
     buscar_grupo=_buscar_grupo_real,
     on_aviso: Callable[[str], None] | None = None,
-    verificar_web: Callable = verificar_nomenclatura_peca,
+    verificar_web: Callable | None = None,
     pedir_intervencao: Callable[[PedidoIntervencao], RespostaIntervencao] | None = None,
     limiar_intervencao: float = 0.45,
     trace: TraceSink | None = None,
@@ -114,6 +115,9 @@ def executar_caso(
 
     por_id = {r.id: r for r in grupo}
     subclusters_duplicata = [s for s in particao.subclusters if s.label == "duplicata_real"]
+    subclusters_distintos = [
+        s for s in particao.subclusters if s.label == "distinto_nao_classificado"
+    ]
     decisoes_brutas = []
     for subcluster in subclusters_duplicata:
         inicio = perf_counter()
@@ -193,7 +197,140 @@ def executar_caso(
                     saida={"membro_ids": decisao.membro_ids, "motivo": decisao.motivo},
                     justificativa=decisao.motivo,
                 )
-    # subcluster de 1 membro -> None (nada pra mesclar); não entra no SQL.
+    distinct_ids: list[int] = []
+    distinct_seen: set[int] = set()
+    for subcluster in subclusters_distintos:
+        for membro_id in subcluster.membro_ids:
+            if membro_id not in distinct_seen:
+                distinct_seen.add(membro_id)
+                distinct_ids.append(membro_id)
+
+    distinct_ids = sorted(distinct_seen)
+
+    if len(distinct_ids) >= 2:
+        registros_distintos = [por_id[membro_id] for membro_id in distinct_ids]
+        inicio = perf_counter()
+        try:
+            decisao_nome_recuperada = arbitrar_nome_recuperacao(
+                registros_distintos,
+                llm=llm,
+                rule_store=rule_store,
+                brand_id=brand_id,
+                on_aviso=avisar,
+                verificar_web=verificar_web,
+                pedir_intervencao=pedir_intervencao,
+                limiar_intervencao=limiar_intervencao,
+                trace=trace,
+                arbitrar_por_provedor=arbitrar_por_provedor,
+            )
+        except Exception as exc:
+            if trace is not None:
+                trace.registrar(
+                    "pipeline", "recuperar_distintos", status="erro",
+                    duracao_ms=(perf_counter() - inicio) * 1000,
+                    entrada={"grupo_ref": grupo_ref, "membro_ids": distinct_ids},
+                    saida={"erro": type(exc).__name__},
+                )
+            raise
+
+        autorizada = (
+            not decisao_nome_recuperada.escalado_humano
+            and decisao_nome_recuperada.valor is not None
+        )
+        if trace is not None:
+            trace.registrar(
+                "arbitragem", "recuperar_distintos_name",
+                status="ok" if autorizada else "escalado",
+                duracao_ms=(perf_counter() - inicio) * 1000,
+                entrada={"grupo_ref": grupo_ref, "membro_ids": distinct_ids},
+                saida={
+                    "valor": decisao_nome_recuperada.valor,
+                    "fonte": decisao_nome_recuperada.fonte,
+                    "confianca": decisao_nome_recuperada.confianca,
+                    "escalado_humano": decisao_nome_recuperada.escalado_humano,
+                    "origem_id": decisao_nome_recuperada.origem_id,
+                    "evidencias": decisao_nome_recuperada.evidencias,
+                },
+                justificativa=decisao_nome_recuperada.justificativa,
+            )
+
+        if autorizada:
+            inicio = perf_counter()
+            try:
+                decisao = montar_decisao_merge(
+                    grupo_ref,
+                    registros_distintos,
+                    llm=llm,
+                    rule_store=rule_store,
+                    brand_id=brand_id,
+                    threshold_divergencia=threshold_divergencia,
+                    on_aviso=avisar,
+                    verificar_web=verificar_web,
+                    pedir_intervencao=pedir_intervencao,
+                    limiar_intervencao=limiar_intervencao,
+                    trace=trace,
+                    decisoes_campo_precalculadas={"name": decisao_nome_recuperada},
+                )
+            except Exception as exc:
+                if trace is not None:
+                    trace.registrar(
+                        "pipeline", "montar_decisao_merge", status="erro",
+                        duracao_ms=(perf_counter() - inicio) * 1000,
+                        entrada={"grupo_ref": grupo_ref, "membro_ids": distinct_ids},
+                        saida={"erro": type(exc).__name__},
+                    )
+                raise
+            decisoes_brutas.append(decisao)
+            if trace is not None:
+                trace.registrar(
+                    "tool", "montar_decisao_merge",
+                    duracao_ms=(perf_counter() - inicio) * 1000,
+                    entrada={"grupo_ref": grupo_ref, "membro_ids": distinct_ids},
+                    saida={
+                        "tipo": type(decisao).__name__ if decisao is not None else "None",
+                        "decisao": decisao,
+                    },
+                    justificativa=(getattr(decisao, "motivo", None) if decisao is not None else None),
+                )
+                if isinstance(decisao, DecisaoMerge):
+                    for decisao_campo in decisao.decisoes_campo:
+                        trace.registrar(
+                            "arbitragem", "arbitrar_campo",
+                            status="escalado" if decisao_campo.escalado_humano else "ok",
+                            entrada={"campo": decisao_campo.campo, "subcluster_ids": distinct_ids},
+                            saida={
+                                "valor": decisao_campo.valor,
+                                "fonte": decisao_campo.fonte,
+                                "confianca": decisao_campo.confianca,
+                                "origem_id": decisao_campo.origem_id,
+                                "evidencias": decisao_campo.evidencias,
+                            },
+                            justificativa=decisao_campo.justificativa,
+                        )
+        else:
+            motivo = (
+                "Recuperação de registros distinto_nao_classificado sem autorização "
+                f"para merge (fonte={decisao_nome_recuperada.fonte!r}, "
+                f"confianca={decisao_nome_recuperada.confianca!r}). "
+                f"{decisao_nome_recuperada.justificativa}"
+            )
+            decisao = GrupoSinalizado(
+                grupo_ref=grupo_ref,
+                motivo=motivo,
+                membro_ids=distinct_ids,
+            )
+            decisoes_brutas.append(decisao)
+            if trace is not None:
+                trace.registrar(
+                    "decisao", "grupo_sinalizado",
+                    status="revisao_manual",
+                    entrada={"grupo_ref": grupo_ref, "membro_ids": distinct_ids},
+                    saida={"membro_ids": distinct_ids, "motivo": motivo},
+                    justificativa=motivo,
+                )
+
+    # Subclusters de um membro não entram como merge; recuperações inconclusivas
+    # entram como GrupoSinalizado, que gera apenas comentário de revisão.
     decisoes = [d for d in decisoes_brutas if d is not None]
 
     inicio = perf_counter()

@@ -8,7 +8,10 @@ from sql_generation.montar_decisao import montar_decisao_merge
 from tools.fk_introspection import introspeccao_fk
 from tools.group_fetch import buscar_grupo, resolver_brand_id
 
-_RUN_LLM_TESTS = os.environ.get("ESTAGIARIO_RUN_LLM_TESTS") == "1"
+_RUN_LLM_TESTS = (
+    os.environ.get("ESTAGIARIO_RUN_LLM_TESTS") == "1"
+    and bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+)
 _RUN_DB_TESTS = os.environ.get("ESTAGIARIO_RUN_DB_TESTS") == "1"
 _SKIP_REASON = (
     "Teste de integração real (DB + chamada de API à Anthropic) — desligado por padrão, "

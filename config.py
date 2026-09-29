@@ -111,3 +111,36 @@ def playwright_mcp_command() -> list[str]:
         return override.split()
     versao = os.environ.get("ESTAGIARIO_PLAYWRIGHT_MCP_VERSION", "0.0.81")
     return ["npx", "-y", f"@playwright/mcp@{versao}"]
+
+
+
+def web_verification_metodo() -> str:
+    """Metodo_Verificacao_Web (R1). Default vazio -> resolvido para 'playwright'
+    pelo seletor, preservando o comportamento atual. Sobrescrevível via
+    ESTAGIARIO_WEB_VERIFICATION_METODO (R9.4)."""
+    return os.environ.get("ESTAGIARIO_WEB_VERIFICATION_METODO", "")
+
+
+def serper_api_key() -> str:
+    """API_KEY_Serper, lida de SERPER_API_KEY (R3.4). Levanta
+    SerperAPIKeyAusenteError se ausente/vazia, sem registrar o valor
+    (R3.5, R8.3, R9.5)."""
+    # Import lazy para evitar ciclo (verification.serper_client importa config).
+    from verification.serper_client import SerperAPIKeyAusenteError
+
+    chave = os.environ.get("SERPER_API_KEY", "").strip()
+    if not chave:
+        raise SerperAPIKeyAusenteError("SERPER_API_KEY ausente ou vazia no .env.")
+    return chave
+
+
+def serper_timeout() -> float:
+    """Timeout (s) da requisição Serper, normalizado ao intervalo [1, 120], com
+    default 30 quando a configuração está ausente ou inválida (R3.7, R9.6).
+    Sobrescrevível via ESTAGIARIO_SERPER_TIMEOUT."""
+    bruto = os.environ.get("ESTAGIARIO_SERPER_TIMEOUT", "30")
+    try:
+        valor = float(bruto)
+    except (TypeError, ValueError):
+        valor = 30.0
+    return min(120.0, max(1.0, valor))

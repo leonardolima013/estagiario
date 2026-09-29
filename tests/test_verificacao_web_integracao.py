@@ -15,7 +15,10 @@ import pytest
 
 from verification.mcp_playwright_agent import verificar_nomenclatura_peca
 
-_RUN_WEB_TESTS = os.environ.get("ESTAGIARIO_RUN_WEB_TESTS") == "1"
+_RUN_WEB_TESTS = (
+    os.environ.get("ESTAGIARIO_RUN_WEB_TESTS") == "1"
+    and bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+)
 _SKIP_REASON = (
     "Teste de integração real (navegador real + chamada de API à Anthropic) — desligado "
     "por padrão, custa dinheiro e depende de rede. Rode com ESTAGIARIO_RUN_WEB_TESTS=1, "

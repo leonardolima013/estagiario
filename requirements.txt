@@ -7,3 +7,5 @@ pytest-asyncio==1.4.0
 anthropic==1.5.0
 pyfiglet==1.0.4
 mcp==2.2.0
+# Dependência de teste: property-based testing das propriedades de corretude da Tool_Provedor_Informacao (spec information-provider-tool).
+hypothesis==6.168.1

@@ -1,5 +1,6 @@
 import pytest
 
+from arbitration.models import DecisaoCampo
 from arbitration.nome import ArbitragemInvalidaError, arbitrar_nome
 from db.rule_store import RuleStore
 from tests.fakes import FakeLLMProvider, FakeVerificadorWeb
@@ -255,3 +256,223 @@ def test_injeta_regras_de_qualidade_nome_no_prompt(fazer_registro, tmp_path):
     arbitrar_nome(registros, llm=FakeLLMComCaptura(), rule_store=rule_store)
 
     assert "nomes de kit devem começar com 'KIT'" in prompts_recebidos[0]
+
+
+
+# ---------------------------------------------------------------------------
+# Tarefa 12.4 — 1º desempate por provedor em arbitrar_nome (Requirement 10).
+#
+# Injeta `arbitrar_por_provedor` como fake e usa brand_id não-nulo. Quando o
+# provedor decide (regra_confiabilidade) ou consenso (sem_conflito), a cascata
+# de nome NÃO deve rodar — por isso o llm/verificar_web destes testes LEVANTAM
+# se forem chamados, provando o curto-circuito (R10.2, R10.5). Quando o provedor
+# é inconclusivo ou lança, a cascata existente roda como hoje (R10.3, R10.4).
+# ---------------------------------------------------------------------------
+
+
+class _LLMExplode:
+    """LLM que falha o teste se o juiz textual for acionado."""
+
+    def gerar_json(self, *args, **kwargs):
+        raise AssertionError("juiz textual não deveria ser chamado — o provedor curto-circuita a cascata")
+
+
+class _WebExplode:
+    """verificar_web que falha o teste se a verificação web for acionada."""
+
+    def __call__(self, *args, **kwargs):
+        raise AssertionError("verificação web não deveria ser chamada — o provedor curto-circuita a cascata")
+
+
+def _provedor_fixo(decisao):
+    """Fábrica de fake de arbitrar_por_provedor que sempre devolve `decisao` e
+    registra as chamadas recebidas (para checar o campo e o brand_id passados)."""
+    chamadas: list[tuple] = []
+
+    def _fake(registros, campo, brand_id):
+        chamadas.append((tuple(r.id for r in registros), campo, brand_id))
+        return decisao
+
+    _fake.chamadas = chamadas
+    return _fake
+
+
+def test_provedor_decide_nome_sem_chamar_llm_nem_web(fazer_registro):
+    # R10.2: provedor devolve Arbitragem_Bem_Sucedida (regra_confiabilidade,
+    # valor definido, escalado_humano=False) → decisão final, sem tocar juiz
+    # textual nem verificação web.
+    registros = [fazer_registro(1, "PIVO SUPERIOR"), fazer_registro(2, "PIVO INFERIOR")]
+    decisao_provedor = DecisaoCampo(
+        campo="name",
+        valor="PIVO INFERIOR",
+        justificativa="Fonte de confiabilidade 'alta' (provider_id=7) decide sozinha o campo 'name'.",
+        fonte="regra_confiabilidade",
+        escalado_humano=False,
+        origem_id=2,
+        confianca="alta",
+    )
+    fake_provedor = _provedor_fixo(decisao_provedor)
+
+    decisao = arbitrar_nome(
+        registros,
+        llm=_LLMExplode(),
+        verificar_web=_WebExplode(),
+        brand_id=1,
+        arbitrar_por_provedor=fake_provedor,
+    )
+
+    assert decisao is decisao_provedor
+    assert decisao.fonte == "regra_confiabilidade"
+    assert decisao.valor == "PIVO INFERIOR"
+    assert decisao.origem_id == 2
+    assert decisao.escalado_humano is False
+    # o provedor foi consultado para o campo "name" com o brand_id fornecido
+    assert fake_provedor.chamadas == [((1, 2), "name", 1)]
+
+
+def test_provedor_sem_conflito_e_decisao_final(fazer_registro):
+    # R10.5: provedor devolve sem_conflito (registro único / consenso) → decisão
+    # final, sem juiz textual nem verificação web.
+    registros = [fazer_registro(1, "POLIA DA CORREIA"), fazer_registro(2, "POLIA DA CORREIA")]
+    decisao_provedor = DecisaoCampo(
+        campo="name",
+        valor="POLIA DA CORREIA",
+        justificativa="Todos os registros concordam no valor.",
+        fonte="sem_conflito",
+        escalado_humano=False,
+    )
+    fake_provedor = _provedor_fixo(decisao_provedor)
+
+    decisao = arbitrar_nome(
+        registros,
+        llm=_LLMExplode(),
+        verificar_web=_WebExplode(),
+        brand_id=1,
+        arbitrar_por_provedor=fake_provedor,
+    )
+
+    assert decisao is decisao_provedor
+    assert decisao.fonte == "sem_conflito"
+    assert decisao.escalado_humano is False
+    assert fake_provedor.chamadas == [((1, 2), "name", 1)]
+
+
+def _provedor_inconclusivo() -> DecisaoCampo:
+    return DecisaoCampo(
+        campo="name",
+        valor=None,
+        justificativa="Arbitragem por confiabilidade inconclusiva: empate no topo.",
+        fonte="escalado_humano",
+        escalado_humano=True,
+        origem_id=None,
+    )
+
+
+def test_provedor_inconclusivo_cai_na_cascata_juiz_textual(fazer_registro):
+    # R10.3: provedor inconclusivo → NÃO retorna a decisão do provedor; cai na
+    # cascata existente. Para nomes CONVERGENTES (só diferem em caixa), a cascata
+    # vai ao juiz textual e retorna julgamento_modelo — verificar_web não é tocado.
+    registros = [fazer_registro(1, "polia da correia"), fazer_registro(2, "POLIA DA CORREIA")]
+    fake_provedor = _provedor_fixo(_provedor_inconclusivo())
+    fake_llm = FakeLLMProvider(
+        {"modo": "escolher", "part_id_escolhido": 2, "justificativa": "melhor capitalização"}
+    )
+    fake_web = FakeVerificadorWeb(
+        ResultadoVerificacao(status="confirmado", nome_sugerido="X", justificativa="", fontes=[])
+    )
+
+    decisao = arbitrar_nome(
+        registros,
+        llm=fake_llm,
+        verificar_web=fake_web,
+        brand_id=1,
+        arbitrar_por_provedor=fake_provedor,
+    )
+
+    assert decisao.fonte == "julgamento_modelo"
+    assert decisao.valor == "POLIA DA CORREIA"
+    assert decisao.origem_id == 2
+    assert fake_provedor.chamadas == [((1, 2), "name", 1)]
+    assert fake_web.chamadas == []  # nomes convergentes não acionam a web
+
+
+def test_provedor_inconclusivo_cai_na_cascata_verificacao_web(fazer_registro):
+    # R10.3: provedor inconclusivo → cai na cascata. Para nomes DIVERGENTES
+    # (SUPERIOR/INFERIOR), a cascata aciona a verificação web como hoje.
+    registros = [fazer_registro(1, "PIVO SUPERIOR"), fazer_registro(2, "PIVO INFERIOR")]
+    fake_provedor = _provedor_fixo(_provedor_inconclusivo())
+
+    class LLMNuncaChamado:
+        def gerar_json(self, *args, **kwargs):
+            raise AssertionError("juiz textual não deveria ser chamado quando os nomes divergem")
+
+    fake_web = FakeVerificadorWeb(
+        ResultadoVerificacao(
+            status="confirmado", nome_sugerido="PIVO INFERIOR", justificativa="2 de 3 fontes confirmam",
+            fontes=[FonteWeb(url="https://exemplo.com", nome_encontrado="PIVO INFERIOR")],
+        )
+    )
+
+    decisao = arbitrar_nome(
+        registros,
+        llm=LLMNuncaChamado(),
+        verificar_web=fake_web,
+        brand_id=1,
+        arbitrar_por_provedor=fake_provedor,
+    )
+
+    assert decisao.fonte == "verificacao_web"
+    assert decisao.valor == "PIVO INFERIOR"
+    assert decisao.origem_id == 2
+    assert fake_provedor.chamadas == [((1, 2), "name", 1)]
+    assert fake_web.chamadas == [("83061", "CITROEN", ["PIVO INFERIOR", "PIVO SUPERIOR"])]
+
+
+def test_provedor_erro_cai_na_cascata_com_aviso(fazer_registro):
+    # R10.4: provedor LANÇA exceção → tratado como inconclusivo; a cascata roda
+    # (aqui, nomes convergentes → juiz textual) e on_aviso recebe a degradação.
+    registros = [fazer_registro(1, "polia da correia"), fazer_registro(2, "POLIA DA CORREIA")]
+
+    def provedor_que_explode(registros, campo, brand_id):
+        raise RuntimeError("falha simulada de banco")
+
+    fake_llm = FakeLLMProvider(
+        {"modo": "escolher", "part_id_escolhido": 2, "justificativa": "melhor capitalização"}
+    )
+    avisos: list[str] = []
+
+    decisao = arbitrar_nome(
+        registros,
+        llm=fake_llm,
+        brand_id=1,
+        arbitrar_por_provedor=provedor_que_explode,
+        on_aviso=avisos.append,
+    )
+
+    assert decisao.fonte == "julgamento_modelo"
+    assert decisao.valor == "POLIA DA CORREIA"
+    # a degradação foi sinalizada via on_aviso, sem interromper a decisão
+    assert any("inconclusiva por erro" in a and "falha simulada de banco" in a for a in avisos)
+
+
+def test_brand_id_none_pula_primeiro_desempate(fazer_registro):
+    # R10.1: com brand_id=None, o 1º desempate por provedor é pulado e a cascata
+    # roda como no legado — o fake do provedor NÃO deve ser chamado.
+    registros = [fazer_registro(1, "polia da correia"), fazer_registro(2, "POLIA DA CORREIA")]
+
+    def provedor_nunca_chamado(registros, campo, brand_id):
+        raise AssertionError("com brand_id=None o provedor não deve ser chamado")
+
+    fake_llm = FakeLLMProvider(
+        {"modo": "escolher", "part_id_escolhido": 2, "justificativa": "melhor capitalização"}
+    )
+
+    decisao = arbitrar_nome(
+        registros,
+        llm=fake_llm,
+        brand_id=None,
+        arbitrar_por_provedor=provedor_nunca_chamado,
+    )
+
+    assert decisao.fonte == "julgamento_modelo"
+    assert decisao.valor == "POLIA DA CORREIA"

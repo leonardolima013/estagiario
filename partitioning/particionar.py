@@ -65,6 +65,15 @@ o mesmo id em dois subclusters, nunca esqueça um id.
 subcluster duplicata_real — isso seria um erro de dados grave.
 - Os sinais heurísticos e regras aprendidas fornecidos são apoio, não verdade \
 absoluta — use seu julgamento sobre o conteúdo real dos nomes.
+- Por PADRÃO, colapse em duplicata_real quando os registros do mesmo search_ref \
++ marca só diferem em ESPECIFICIDADE ou em qualificador de nome, sem sufixo de \
+sobremedida divergente e sem divergência técnica. Cadastros da mesma peça \
+frequentemente têm nomes com granularidade diferente: 'jogo de X', 'kit de X' e \
+'X avulsa' costumam ser a MESMA peça cadastrada com nomes de granularidade \
+diferente, não um kit e seu componente separados. Ex: 'jogo de bucha do eixo de \
+comando', 'bucha do eixo de comando' e 'kit de buchas do eixo de comando' são, \
+na ausência de sobremedida divergente e de divergência técnica, a MESMA peça → \
+duplicata_real.
 - Cadastros de peças frequentemente têm erros de nomenclatura (nome incompleto, \
 genérico demais, ou até um qualificador posicional errado como 'superior' em vez \
 de 'inferior'). Quando os registros do grupo NÃO têm nenhuma evidência técnica \
@@ -76,9 +85,19 @@ duplicata_real — mesmo que um dos nomes pareça contradizer outro nesse \
 qualificador — em vez de presumir que são peças fisicamente diferentes só pelo \
 texto do nome. A arbitragem de nome (Fase 2, com verificação externa quando \
 necessário) é o lugar certo pra resolver qual nome está correto, não o \
-particionamento. Reserve distinto_nao_classificado pra quando os nomes descrevem \
-categorias de produto claramente diferentes (ex: uma polia avulsa vs um kit de \
-reparo vs uma guia) ou quando HÁ divergência técnica objetiva entre os registros.
+particionamento.
+- A mera presença de 'KIT' ou 'JOGO' no nome de um registro, com o nome do outro \
+aparecendo como parte dele, NÃO é motivo para separar os registros — é apenas um \
+indício FRACO. Sozinho (sem divergência técnica objetiva e sem sufixo de \
+sobremedida divergente), esse indício aponta para a MESMA peça com nomes de \
+especificidade diferente; nesses casos prefira duplicata_real, não kit_componente.
+- Mantenha variante_dimensional apenas para registros com sufixos de sobremedida \
+divergentes entre si (STD, 0,25, 0,50, 0,75, 1,00...).
+- Reserve distinto_nao_classificado APENAS para produtos completamente diferentes \
+— nomes que descrevem categorias de produto claramente distintas apesar do mesmo \
+código + marca (ex: uma polia avulsa vs um kit de reparo vs uma guia). Isso é \
+provável erro de registro do search_ref + marca: sinalize para revisão manual, \
+sem merge.
 """
 
 
@@ -110,7 +129,11 @@ def _sinais_heuristicos(grupo: list[RegistroCatalogPart], threshold_divergencia:
                 f"id={b.id} (sufixo {sufixo_b}) — sobremedidas diferentes, provavelmente não intercambiáveis"
             )
         if sinal_kit_componente(a.name, b.name):
-            sinais.append(f"[kit_componente?] id={a.id} vs id={b.id} — nome de um contém o do outro sem 'KIT'")
+            sinais.append(
+                f"[mesma_peca_especificidade?] id={a.id} vs id={b.id} — um nome contém o outro "
+                f"(diferença de especificidade/'KIT'/'JOGO'); indício FRACO, por si só NÃO separa — "
+                f"provável duplicata_real, decidir o nome na arbitragem"
+            )
         for campo, va, vb in (
             ("width", a.width, b.width),
             ("gross_weight", a.gross_weight, b.gross_weight),

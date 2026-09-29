@@ -59,6 +59,40 @@ def test_uniao_ordena_por_confiabilidade_mais_confiavel_primeiro(fazer_registro)
     assert decisao.valor.splitlines() == ["LINHA B", "LINHA A"]
 
 
+def test_uniao_ordena_minima_abaixo_dos_demais_niveis(fazer_registro):
+    registros = [
+        fazer_registro(1, "X", application="LINHA MINIMA"),
+        fazer_registro(2, "Y", application="LINHA BAIXA"),
+        fazer_registro(3, "Z", application="LINHA ALTA"),
+        fazer_registro(4, "W", application="LINHA MEDIA"),
+    ]
+    buscar_fonte = _buscar_fonte_por_id(
+        {
+            1: FonteCampo(provider_id=1, owner_id=None),
+            2: FonteCampo(provider_id=2, owner_id=None),
+            3: FonteCampo(provider_id=3, owner_id=None),
+            4: FonteCampo(provider_id=4, owner_id=None),
+        }
+    )
+
+    def calcular_nivel(fonte, brand_id):
+        return {1: "minima", 2: "baixa", 3: "alta", 4: "media"}[fonte.provider_id]
+
+    decisao = arbitrar_application(
+        registros,
+        brand_id=_BRAND_ID,
+        buscar_fonte=buscar_fonte,
+        calcular_nivel_confiabilidade=calcular_nivel,
+    )
+
+    assert decisao.valor.splitlines() == [
+        "LINHA ALTA",
+        "LINHA MEDIA",
+        "LINHA BAIXA",
+        "LINHA MINIMA",
+    ]
+
+
 def test_registros_sem_application_nao_quebram(fazer_registro, sem_banco):
     registros = [fazer_registro(1, "X", application=None), fazer_registro(2, "Y", application="")]
 

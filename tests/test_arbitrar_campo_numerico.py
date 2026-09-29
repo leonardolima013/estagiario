@@ -99,3 +99,45 @@ def test_campo_categorico_qualquer_diferenca_e_divergencia(fazer_registro, sem_b
 
     assert decisao.fonte == "julgamento_modelo"
     assert decisao.valor == "1234"
+
+
+
+def test_minima_perde_para_nivel_superior(fazer_registro):
+    # `minima` é estritamente abaixo de `baixa` na ordem compartilhada: o registro
+    # de nível superior vence a arbitragem por confiabilidade.
+    registros = [fazer_registro(1, "X", width=3.2), fazer_registro(2, "Y", width=2.0)]
+    buscar_fonte = _buscar_fonte_por_id(
+        {1: FonteCampo(provider_id=1, owner_id=None), 2: FonteCampo(provider_id=2, owner_id=None)}
+    )
+    calcular_nivel = _nivel_por_id({1: "minima", 2: "baixa"})
+
+    decisao = arbitrar_campo_numerico(
+        registros, "width", llm=None, rule_store=None, brand_id=_BRAND_ID,
+        buscar_fonte=buscar_fonte, calcular_nivel_confiabilidade=calcular_nivel,
+    )
+
+    assert decisao.fonte == "regra_confiabilidade"
+    assert decisao.valor == 2.0
+    assert decisao.origem_id == 2
+    assert decisao.confianca == "baixa"
+
+
+def test_empate_no_topo_minima_cai_pro_modelo(fazer_registro):
+    # Empate no topo (ambas as fontes `minima`) com valores distintos delega ao modelo.
+    registros = [fazer_registro(1, "X", width=3.2), fazer_registro(2, "Y", width=2.0)]
+    buscar_fonte = _buscar_fonte_por_id(
+        {1: FonteCampo(provider_id=1, owner_id=None), 2: FonteCampo(provider_id=2, owner_id=None)}
+    )
+    calcular_nivel = _nivel_por_id({1: "minima", 2: "minima"})
+    fake_llm = FakeLLMProvider(
+        {"part_id_escolhido": 2, "justificativa": "peça menor bate com o catálogo", "confianca": "alta"}
+    )
+
+    decisao = arbitrar_campo_numerico(
+        registros, "width", llm=fake_llm, rule_store=None, brand_id=_BRAND_ID,
+        buscar_fonte=buscar_fonte, calcular_nivel_confiabilidade=calcular_nivel,
+    )
+
+    assert decisao.fonte == "julgamento_modelo"
+    assert decisao.valor == 2.0
+    assert decisao.origem_id == 2

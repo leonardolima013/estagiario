@@ -6,9 +6,11 @@ similarity_id (agrupamento de duplicatas já existente no sistema) conflitantes.
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Mapping
 
 from arbitration.arbitrar import CAMPOS_SUPORTADOS, arbitrar_campo
+from arbitration.models import DecisaoCampo
+from arbitration.nome import nome_em_maiusculas
 from db.rule_store import RuleStore
 from llm.provider import LLMProvider
 from loop.tracing import TraceSink
@@ -18,7 +20,6 @@ from memory.recuperador import consultar_intervencao
 from sql_generation.models import DecisaoMerge, GrupoSinalizado
 from sql_generation.vencedor import escolher_vencedor
 from tools.group_fetch import RegistroCatalogPart
-from verification.mcp_playwright_agent import verificar_nomenclatura_peca
 
 _JSON_SCHEMA_SIMILARITY = {
     "type": "object",
@@ -91,10 +92,11 @@ def montar_decisao_merge(
     brand_id: int,
     threshold_divergencia: float = 0.15,
     on_aviso: Callable[[str], None] | None = None,
-    verificar_web: Callable = verificar_nomenclatura_peca,
+    verificar_web: Callable | None = None,
     pedir_intervencao: Callable[[PedidoIntervencao], RespostaIntervencao] | None = None,
     limiar_intervencao: float = 0.45,
     trace: TraceSink | None = None,
+    decisoes_campo_precalculadas: Mapping[str, DecisaoCampo] | None = None,
 ) -> DecisaoMerge | GrupoSinalizado | None:
     """Retorna None quando não há nada pra mesclar (subcluster de 1 membro) — não é
     um erro: a Fase 1 às vezes rotula um item isolado como duplicata_real mesmo sem
@@ -174,15 +176,33 @@ def montar_decisao_merge(
     vencedor = escolher_vencedor(registros_subcluster)
     perdedor_ids = [r.id for r in registros_subcluster if r.id != vencedor.id]
 
-    decisoes_campo = [
-        arbitrar_campo(
-            registros_subcluster, campo, llm, rule_store, brand_id, threshold_divergencia,
-            on_aviso=on_aviso, verificar_web=verificar_web,
-            pedir_intervencao=pedir_intervencao, limiar_intervencao=limiar_intervencao,
-            trace=trace,
+    decisoes_campo: list[DecisaoCampo] = []
+    for campo in sorted(CAMPOS_SUPORTADOS):
+        pre_calculada = (
+            decisoes_campo_precalculadas.get(campo)
+            if decisoes_campo_precalculadas is not None
+            else None
         )
-        for campo in sorted(CAMPOS_SUPORTADOS)
-    ]
+        if pre_calculada is not None:
+            if pre_calculada.campo != campo:
+                raise ValueError(
+                    f"decisão pré-calculada para {campo!r} informa campo "
+                    f"incompatível: {pre_calculada.campo!r}"
+                )
+            decisoes_campo.append(pre_calculada)
+            continue
+        decisoes_campo.append(
+            arbitrar_campo(
+                registros_subcluster, campo, llm, rule_store, brand_id, threshold_divergencia,
+                on_aviso=on_aviso, verificar_web=verificar_web,
+                pedir_intervencao=pedir_intervencao, limiar_intervencao=limiar_intervencao,
+                trace=trace,
+            )
+        )
+
+    # Salvaguarda final: nenhum name chega ao SQL/preview/JSON fora de MAIÚSCULAS,
+    # inclusive decisões pré-calculadas (recuperação de distintos) ou injetadas.
+    decisoes_campo = [nome_em_maiusculas(dc) for dc in decisoes_campo]
 
     # Snapshot dos valores atuais do vencedor pros campos decididos — gerar_sql usa
     # pra emitir no UPDATE só o que de fato muda (Q-02=a).

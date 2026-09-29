@@ -1,6 +1,6 @@
 from loop.tracing import TraceCollector
 from pipeline import ResultadoCaso, executar_caso
-from sql_generation.models import DecisaoMerge
+from sql_generation.models import DecisaoMerge, GrupoSinalizado
 from tests.fakes import FakeVerificadorWeb
 from tools.fk_introspection import FkDependency
 from verification.models import ResultadoVerificacao
@@ -74,11 +74,22 @@ def test_executar_caso_sem_duplicata_real_retorna_sql_vazio(fazer_registro, sem_
             }
 
     resultado = executar_caso(
-        "83061", 1, llm=FakeLLMSoDistintos(), dependencias_fk=[], buscar_grupo=_buscar_grupo_fake(fazer_registro)
+        "83061", 1, llm=FakeLLMSoDistintos(), dependencias_fk=[], buscar_grupo=_buscar_grupo_fake(fazer_registro),
+        verificar_web=FakeVerificadorWeb(
+            ResultadoVerificacao(
+                status="inconclusivo",
+                nome_sugerido=None,
+                justificativa="sem confirmação",
+                fontes=[],
+            )
+        ),
     )
 
-    assert resultado.decisoes == []
-    assert resultado.sql == ""
+    assert len(resultado.decisoes) == 1
+    assert isinstance(resultado.decisoes[0], GrupoSinalizado)
+    assert resultado.decisoes[0].membro_ids == [1, 2]
+    assert "DELETE" not in resultado.sql
+    assert "BEGIN" not in resultado.sql
 
 
 def test_executar_caso_usa_fk_dependencias_fornecidas(fazer_registro, sem_banco):

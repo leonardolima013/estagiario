@@ -4,9 +4,12 @@ não reaproveita a cascata de confiabilidade dos campos numéricos.
 
 from __future__ import annotations
 
+import dataclasses
+import functools
 from typing import Callable
 
 from arbitration.models import DecisaoCampo
+from arbitration.provedor_informacao import arbitrar_por_provedor
 from db.rule_store import RuleStore
 from llm.provider import LLMProvider
 from loop.tracing import TraceSink
@@ -15,7 +18,8 @@ from memory.models import PedidoIntervencao, RespostaIntervencao
 from memory.recuperador import consultar_intervencao
 from tools.group_fetch import RegistroCatalogPart
 from verification.divergencia import nomes_normalizados_divergem, tokens_normalizados
-from verification.mcp_playwright_agent import verificar_nomenclatura_peca
+from verification.models import ResultadoVerificacao
+from verification.selector import resolver_verificacao_web
 
 _JSON_SCHEMA = {
     "type": "object",
@@ -110,17 +114,182 @@ def _decidir_nome_com_regra(
     )
 
 
-def arbitrar_nome(
+def provedor_nome_autoriza(decisao: DecisaoCampo | None) -> bool:
+    """Retorna se uma decisão de provedor pode encerrar a arbitragem de ``name``.
+
+    O atalho é deliberadamente restrito à fonte de confiabilidade alta da marca:
+    consenso continua sendo tratado separadamente pelo caminho normal, enquanto
+    qualquer resultado de confiabilidade menor precisa passar pela verificação
+    web quando o nome diverge.
+    """
+    return bool(
+        decisao is not None
+        and decisao.fonte == "regra_confiabilidade"
+        and decisao.confianca == "alta"
+        and decisao.valor is not None
+        and not decisao.escalado_humano
+    )
+
+
+def decisao_nome_da_verificacao_web(
+    registros: list[RegistroCatalogPart],
+    resultado: ResultadoVerificacao,
+) -> DecisaoCampo | None:
+    """Converte uma confirmação web em decisão auditável de ``name``.
+
+    ``None`` significa que a resposta não trouxe um nome utilizável — inclusive
+    quando o verificador marcou o resultado como confirmado mas retornou apenas
+    espaços. O helper é compartilhado pelo caminho normal e pela recuperação de
+    registros distintos, evitando chamadas e construções de evidência duplicadas.
+    """
+    if resultado.status != "confirmado":
+        return None
+    if not isinstance(resultado.nome_sugerido, str) or not resultado.nome_sugerido.strip():
+        return None
+
+    nome_sugerido = resultado.nome_sugerido.strip()
+    tokens_sugerido = tokens_normalizados(nome_sugerido)
+    origem_id = next(
+        (r.id for r in registros if tokens_normalizados(r.name) == tokens_sugerido),
+        None,
+    )
+    justificativa = resultado.justificativa or "Nome confirmado pela verificação web."
+    if resultado.fontes:
+        justificativa += " (fontes: " + ", ".join(f.url for f in resultado.fontes) + ")"
+    return DecisaoCampo(
+        campo="name",
+        valor=nome_sugerido,
+        justificativa=justificativa,
+        fonte="verificacao_web",
+        origem_id=origem_id,
+        confianca="alta",
+        evidencias=[
+            {"tipo": "web", "url": fonte.url, "nome_encontrado": fonte.nome_encontrado}
+            for fonte in resultado.fontes
+        ],
+    )
+
+
+def _arbitrar_nome_recuperacao(
     registros: list[RegistroCatalogPart],
     llm: LLMProvider,
     rule_store: RuleStore | None = None,
+    brand_id: int | None = None,
     on_aviso: Callable[[str], None] | None = None,
-    verificar_web: Callable = verificar_nomenclatura_peca,
+    verificar_web: Callable | None = None,
     pedir_intervencao: Callable[[PedidoIntervencao], RespostaIntervencao] | None = None,
     limiar_intervencao: float = 0.45,
     trace: TraceSink | None = None,
+    arbitrar_por_provedor=arbitrar_por_provedor,
 ) -> DecisaoCampo:
+    """Aplica o gate provider→web para a recuperação de partes distintas.
+
+    Ao contrário da arbitragem normal, a recuperação deve consultar a web para
+    qualquer resultado que não seja o gate exato de confiabilidade alta, mesmo
+    quando os nomes são textualmente convergentes. A cascata de memória,
+    intervenção e escalonamento é reutilizada por ``_arbitrar_nome_via_web``.
+    """
+    if not registros:
+        raise ValueError("conjunto de recuperação vazio")
+    if len(registros) == 1:
+        registro = registros[0]
+        return DecisaoCampo(
+            campo="name",
+            valor=registro.name,
+            justificativa="Conjunto de recuperação com um único registro.",
+            fonte="sem_conflito",
+        )
+    if brand_id is None:
+        raise ValueError("brand_id é obrigatório para a recuperação por provedor")
+
+    try:
+        decisao_provedor = arbitrar_por_provedor(registros, "name", brand_id)
+    except Exception as exc:  # noqa: BLE001 — degradação controlada para a web
+        if on_aviso:
+            on_aviso(f"Tool_Provedor_Informacao inconclusiva por erro em 'name': {exc}")
+        decisao_provedor = None
+        if trace is not None:
+            trace.registrar(
+                "tool", "arbitrar_por_provedor", status="erro",
+                entrada={"campo": "name", "membro_ids": [r.id for r in registros]},
+                saida={"erro": type(exc).__name__},
+                justificativa="Provider inconclusivo; recuperação seguirá para a web.",
+            )
+    else:
+        if trace is not None:
+            trace.registrar(
+                "tool", "arbitrar_por_provedor",
+                entrada={"campo": "name", "membro_ids": [r.id for r in registros]},
+                saida=(
+                    {
+                        "valor": decisao_provedor.valor,
+                        "fonte": decisao_provedor.fonte,
+                        "confianca": decisao_provedor.confianca,
+                        "escalado_humano": decisao_provedor.escalado_humano,
+                        "origem_id": decisao_provedor.origem_id,
+                        "evidencias": decisao_provedor.evidencias,
+                    }
+                    if decisao_provedor is not None
+                    else {"resultado": None}
+                ),
+                justificativa=(
+                    decisao_provedor.justificativa if decisao_provedor is not None
+                    else "Provider não retornou decisão."
+                ),
+            )
+
+    if provedor_nome_autoriza(decisao_provedor):
+        return decisao_provedor
+
+    if verificar_web is None:
+        verificar_web = resolver_verificacao_web()
+    return _arbitrar_nome_via_web(
+        registros, llm, rule_store, on_aviso, verificar_web,
+        pedir_intervencao, limiar_intervencao, trace,
+    )
+
+
+def _arbitrar_nome(
+    registros: list[RegistroCatalogPart],
+    llm: LLMProvider,
+    rule_store: RuleStore | None = None,
+    brand_id: int | None = None,
+    on_aviso: Callable[[str], None] | None = None,
+    verificar_web: Callable | None = None,
+    pedir_intervencao: Callable[[PedidoIntervencao], RespostaIntervencao] | None = None,
+    limiar_intervencao: float = 0.45,
+    trace: TraceSink | None = None,
+    arbitrar_por_provedor=arbitrar_por_provedor,
+) -> DecisaoCampo:
+    # O seletor é resolvido somente quando a cascata realmente precisar da
+    # verificação web; assim consenso, alta confiança e nomes não divergentes não
+    # importam/criam uma skill de web desnecessariamente.
+
+    # 1º desempate por confiabilidade de fonte, antes de qualquer outra estratégia
+    # de nome (juiz textual, verificação web ou intervenção humana) — Requirement 10.
+    # Só quando há brand_id: ele é necessário pra resolver o Provedor_Da_Marca. Com
+    # brand_id=None (chamadas legadas), o 1º desempate é pulado e a cascata atual roda
+    # como antes (R10.1). Erro em runtime da tool é degradação controlada: tratado como
+    # Arbitragem_Inconclusiva, com aviso opcional via on_aviso, e a cascata prossegue.
+    if brand_id is not None:
+        try:
+            decisao_provedor = arbitrar_por_provedor(registros, "name", brand_id)
+        except Exception as exc:  # noqa: BLE001 — degradação controlada p/ a cascata de nome
+            if on_aviso:
+                on_aviso(f"Tool_Provedor_Informacao inconclusiva por erro em 'name': {exc}")
+            decisao_provedor = None
+        if decisao_provedor is not None:
+            # sem_conflito (único / consenso, R10.5) continua sendo final sem web.
+            if decisao_provedor.fonte == "sem_conflito":
+                return decisao_provedor
+            # Somente o gate exato da fabricante/brand evita a web (R10.2).
+            if provedor_nome_autoriza(decisao_provedor):
+                return decisao_provedor
+            # Arbitragem abaixo de alta/inconclusiva cai na cascata existente.
+
     if nomes_normalizados_divergem([r.name for r in registros]):
+        if verificar_web is None:
+            verificar_web = resolver_verificacao_web()
         return _arbitrar_nome_via_web(
             registros, llm, rule_store, on_aviso, verificar_web,
             pedir_intervencao, limiar_intervencao, trace,
@@ -184,28 +353,19 @@ def _arbitrar_nome_via_web(
             f"nome_sugerido={resultado.nome_sugerido!r}"
         )
 
-    if resultado.status == "confirmado":
-        # Casa o nome sugerido a um candidato por tokens normalizados (acento/caixa/ordem
-        # tolerante) — igualdade exata quase nunca bate (a web devolve acentuado/reordenado),
-        # deixando origem_id=None à toa e quebrando a cor-por-id/rastreabilidade na TUI (F-07).
-        tokens_sugerido = tokens_normalizados(resultado.nome_sugerido or "")
-        origem_id = next(
-            (r.id for r in registros if tokens_normalizados(r.name) == tokens_sugerido),
-            None,
-        )
-        justificativa = resultado.justificativa
-        if resultado.fontes:
-            justificativa += " (fontes: " + ", ".join(f.url for f in resultado.fontes) + ")"
-        return DecisaoCampo(
-            campo="name", valor=resultado.nome_sugerido, justificativa=justificativa,
-            fonte="verificacao_web", origem_id=origem_id, confianca="alta",
-            evidencias=[
-                {"tipo": "web", "url": fonte.url, "nome_encontrado": fonte.nome_encontrado}
-                for fonte in resultado.fontes
-            ],
-        )
+    decisao_web = decisao_nome_da_verificacao_web(registros, resultado)
+    if decisao_web is not None:
+        return decisao_web
 
-    motivo = resultado.justificativa or "Verificação web inconclusiva — sem confirmação clara das fontes."
+    if resultado.status == "confirmado":
+        motivo = (
+            resultado.justificativa
+            or "Verificação web confirmou a consulta, mas não retornou um nome utilizável."
+        )
+        if resultado.nome_sugerido is None or not str(resultado.nome_sugerido).strip():
+            motivo += " Nome sugerido vazio; tratando como inconclusivo."
+    else:
+        motivo = resultado.justificativa or "Verificação web inconclusiva — sem confirmação clara das fontes."
     contexto_web = "; ".join(
         [
             f"status={resultado.status}",
@@ -287,3 +447,24 @@ def _arbitrar_nome_via_web(
             for fonte in resultado.fontes
         ],
     )
+
+
+def nome_em_maiusculas(decisao: DecisaoCampo) -> DecisaoCampo:
+    """Todo nome escolhido vai para o catálogo em MAIÚSCULAS, qualquer que seja a
+    origem (juiz interno, verificação web, memória/intervenção humana, provedor,
+    registro único). Decisão sem valor (escalado_humano) fica intacta — o SQL
+    não mexe no name nesse caso."""
+    if decisao.campo != "name" or not isinstance(decisao.valor, str):
+        return decisao
+    valor = decisao.valor.upper()
+    return decisao if valor == decisao.valor else dataclasses.replace(decisao, valor=valor)
+
+
+@functools.wraps(_arbitrar_nome)
+def arbitrar_nome(*args, **kwargs) -> DecisaoCampo:
+    return nome_em_maiusculas(_arbitrar_nome(*args, **kwargs))
+
+
+@functools.wraps(_arbitrar_nome_recuperacao)
+def arbitrar_nome_recuperacao(*args, **kwargs) -> DecisaoCampo:
+    return nome_em_maiusculas(_arbitrar_nome_recuperacao(*args, **kwargs))

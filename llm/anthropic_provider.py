@@ -2,6 +2,11 @@
 
 Saída estruturada via tool-use forçado (tool_choice apontando pro próprio
 schema) — mais confiável que pedir JSON em texto livre e fazer parsing manual.
+
+`cachear_system=True` marca o prefixo fixo (tool schema + system) com
+`cache_control` para prompt caching em chamadas repetidas com o mesmo system.
+Abaixo do mínimo cacheável do modelo (4096 tokens no Haiku 4.5) o marcador é
+ignorado silenciosamente pela API — sem erro, só sem economia.
 """
 
 from __future__ import annotations
@@ -13,9 +18,10 @@ from llm.provider import LLMProvider
 
 
 class AnthropicProvider(LLMProvider):
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(self, model: str | None = None, *, cachear_system: bool = False) -> None:
         self._client = anthropic.Anthropic(api_key=anthropic_api_key())
         self._model = model or llm_model()
+        self._cachear_system = cachear_system
 
     def gerar_json(
         self,
@@ -24,10 +30,15 @@ class AnthropicProvider(LLMProvider):
         json_schema: dict,
         schema_name: str = "output",
     ) -> dict:
+        system_param = (
+            [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+            if self._cachear_system
+            else system
+        )
         response = self._client.messages.create(
             model=self._model,
             max_tokens=4096,
-            system=system,
+            system=system_param,
             messages=[{"role": "user", "content": user}],
             tools=[
                 {
