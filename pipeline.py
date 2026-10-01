@@ -14,8 +14,15 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Callable
 
+import config
 from arbitration.nome import arbitrar_nome_recuperacao
+from arbitration.pesquisa_web import ContextoPesquisaWeb, PortaColeta, SinalCancelamento
 from arbitration.provedor_informacao import arbitrar_por_provedor
+from coleta_paginas.integracao import (
+    IntegracaoColeta,
+    resolver_coleta_efetiva,
+    resolver_stealth_efetivo,
+)
 from db.rule_store import RuleStore
 from llm.provider import LLMProvider
 from loop.tracing import TraceSink
@@ -50,7 +57,42 @@ def executar_caso(
     pedir_intervencao: Callable[[PedidoIntervencao], RespostaIntervencao] | None = None,
     limiar_intervencao: float = 0.45,
     trace: TraceSink | None = None,
+    *,
+    pesquisa_web: bool = True,
+    coleta_html: bool | None = None,
+    cancel_event: SinalCancelamento | None = None,
+    integracao_coleta: PortaColeta | None = None,
+    fallback_stealth: bool | None = None,
 ) -> ResultadoCaso:
+    """Roda o pipeline completo para uma família.
+
+    ``pesquisa_web`` (Opcao_Pesquisa_Web) desliga a verificação web da
+    arbitragem de nome; ``coleta_html`` (Opcao_Coleta) força a coleta de páginas
+    e, quando ``None``, vale ``ESTAGIARIO_COLETA_HABILITADA``; ``cancel_event``
+    é o sinal de cancelamento cooperativo consultado pela coleta;
+    ``integracao_coleta`` injeta a porta de coleta (padrão: uma
+    ``IntegracaoColeta`` nova por execução, sem I/O na construção).
+
+    ``fallback_stealth`` (Opcao_Stealth) liga ou desliga o fallback stealth da
+    coleta e prevalece sobre ``ESTAGIARIO_COLETA_STEALTH_HABILITADA``, inclusive
+    quando a chave tem valor inválido; quando ``None``, vale a chave (ausente ou
+    vazia → desligado; inválida → desligado com aviso
+    ``stealth_configuracao_invalida``). O fallback só é usado quando a coleta é
+    de fato chamada e não altera nenhuma decisão do caso.
+    """
+    # Canal_Avisos da coleta é o on_aviso original, não o wrapper ``avisar``
+    # (que também grava observabilidade/aviso no trace — Req 5.4, 8.1).
+    contexto_web = ContextoPesquisaWeb(
+        pesquisa_habilitada=pesquisa_web,
+        coleta_efetiva=resolver_coleta_efetiva(coleta_html, config.coleta_habilitada()),
+        cancel_event=cancel_event,
+        canal_avisos=on_aviso,
+        coleta=integracao_coleta if integracao_coleta is not None else IntegracaoColeta(),
+        stealth_efetivo=resolver_stealth_efetivo(
+            fallback_stealth, config.coleta_stealth_habilitada()
+        ),
+    )
+
     def avisar(mensagem: str) -> None:
         if trace is not None:
             trace.registrar("observabilidade", "aviso", detalhes={"mensagem": mensagem})
@@ -130,6 +172,7 @@ def executar_caso(
                 on_aviso=avisar, verificar_web=verificar_web,
                 pedir_intervencao=pedir_intervencao, limiar_intervencao=limiar_intervencao,
                 trace=trace,
+                contexto_web=contexto_web,
             )
         except Exception as exc:
             if trace is not None:
@@ -222,6 +265,7 @@ def executar_caso(
                 limiar_intervencao=limiar_intervencao,
                 trace=trace,
                 arbitrar_por_provedor=arbitrar_por_provedor,
+                contexto_web=contexto_web,
             )
         except Exception as exc:
             if trace is not None:
@@ -270,6 +314,7 @@ def executar_caso(
                     limiar_intervencao=limiar_intervencao,
                     trace=trace,
                     decisoes_campo_precalculadas={"name": decisao_nome_recuperada},
+                    contexto_web=contexto_web,
                 )
             except Exception as exc:
                 if trace is not None:

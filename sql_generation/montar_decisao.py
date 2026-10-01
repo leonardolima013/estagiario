@@ -6,7 +6,7 @@ similarity_id (agrupamento de duplicatas já existente no sistema) conflitantes.
 
 from __future__ import annotations
 
-from typing import Callable, Mapping
+from typing import TYPE_CHECKING, Callable, Mapping
 
 from arbitration.arbitrar import CAMPOS_SUPORTADOS, arbitrar_campo
 from arbitration.models import DecisaoCampo
@@ -20,6 +20,9 @@ from memory.recuperador import consultar_intervencao
 from sql_generation.models import DecisaoMerge, GrupoSinalizado
 from sql_generation.vencedor import escolher_vencedor
 from tools.group_fetch import RegistroCatalogPart
+
+if TYPE_CHECKING:
+    from arbitration.pesquisa_web import ContextoPesquisaWeb
 
 _JSON_SCHEMA_SIMILARITY = {
     "type": "object",
@@ -97,6 +100,8 @@ def montar_decisao_merge(
     limiar_intervencao: float = 0.45,
     trace: TraceSink | None = None,
     decisoes_campo_precalculadas: Mapping[str, DecisaoCampo] | None = None,
+    *,
+    contexto_web: ContextoPesquisaWeb | None = None,
 ) -> DecisaoMerge | GrupoSinalizado | None:
     """Retorna None quando não há nada pra mesclar (subcluster de 1 membro) — não é
     um erro: a Fase 1 às vezes rotula um item isolado como duplicata_real mesmo sem
@@ -196,7 +201,7 @@ def montar_decisao_merge(
                 registros_subcluster, campo, llm, rule_store, brand_id, threshold_divergencia,
                 on_aviso=on_aviso, verificar_web=verificar_web,
                 pedir_intervencao=pedir_intervencao, limiar_intervencao=limiar_intervencao,
-                trace=trace,
+                trace=trace, contexto_web=contexto_web,
             )
         )
 

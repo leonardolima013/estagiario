@@ -190,6 +190,12 @@ def executar_loop(
                 "on_aviso": on_aviso,
                 "pedir_intervencao": pedir_intervencao_trace if pedir_intervencao is not None else None,
                 "trace": trace,
+                # Sinal_Cancelamento repassado ao caso (Req 6.6): a coleta de páginas
+                # consulta o mesmo evento que o loop verifica entre iterações.
+                "cancel_event": cancel_event,
+                # Decisão Q2 (Req 1.7): o loop nunca liga o fallback stealth,
+                # mesmo com a Chave_Stealth habilitada.
+                "fallback_stealth": False,
             }
             if buscar_grupo is not None:
                 kwargs["buscar_grupo"] = buscar_grupo

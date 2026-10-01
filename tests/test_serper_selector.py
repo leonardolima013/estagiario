@@ -112,3 +112,51 @@ def test_default_serper_sem_llm_disponivel_cai_no_deterministico(monkeypatch):
     assert resolver_verificacao_web("serper")("C", "M", ["A"], on_evento=eventos.append) == "ok"
     assert recebidos == [None]
     assert any("indisponível" in e for e in eventos)
+
+
+
+def test_default_serper_implementa_protocolo_com_resultados():
+    """html-extract-on-web-search Req 1.6: o verificador Serper padrão entrega
+    Resultados_Estruturados; preserva __wrapped__, nome e assinatura."""
+    import verification.selector as selector
+    from verification.resultados_estruturados import VerificadorComResultados
+    from verification.serper_agent import verificar_nomenclatura_peca_serper
+
+    chamavel = selector._default_serper()
+    assert isinstance(chamavel, VerificadorComResultados)
+    assert chamavel.__wrapped__ is verificar_nomenclatura_peca_serper
+    assert chamavel.__name__ == verificar_nomenclatura_peca_serper.__name__
+    assert chamavel.__doc__ == verificar_nomenclatura_peca_serper.__doc__
+
+
+def test_verificar_com_resultados_captura_organicos_e_call_nao_passa_on_resultados(monkeypatch):
+    """Req 1.6, 4.3: `verificar_com_resultados` repassa `on_resultados` e devolve os
+    orgânicos capturados (ou None sem Pesquisa_Realizada); `__call__` não o repassa."""
+    import verification.selector as selector
+    import verification.serper_agent as serper_agent
+    from verification.serper_client import ResultadoOrganico
+
+    monkeypatch.setattr(selector, "_llm_serper_padrao", lambda: "LLM")
+    organicos = (ResultadoOrganico(title="t", link="https://a.com", snippet="s", position=1),)
+    chamadas: list[dict] = []
+
+    def _skill_fake(codigo, marca, nomes, *, on_evento=None, llm=None, **kwargs):
+        chamadas.append({"llm": llm, **kwargs})
+        if codigo == "COM" and "on_resultados" in kwargs:
+            kwargs["on_resultados"](organicos)
+        return f"resultado-{codigo}"
+
+    monkeypatch.setattr(serper_agent, "verificar_nomenclatura_peca_serper", _skill_fake)
+    chamavel = resolver_verificacao_web("serper")
+
+    com = chamavel.verificar_com_resultados("COM", "M", ["A"])
+    assert com.resultado == "resultado-COM"
+    assert com.resultados_pesquisa == organicos
+
+    sem = chamavel.verificar_com_resultados("SEM", "M", ["A"])
+    assert sem.resultado == "resultado-SEM"
+    assert sem.resultados_pesquisa is None
+
+    assert chamavel("COM", "M", ["A"]) == "resultado-COM"
+    assert "on_resultados" not in chamadas[-1]
+    assert all(c["llm"] == "LLM" for c in chamadas)

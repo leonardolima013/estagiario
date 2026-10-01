@@ -283,3 +283,62 @@ IntervencaoScreen {
     color: $text;
     margin: 1 0;
 }
+
+
+/* Seletores "Pesquisa web" e "Coleta de HTML" da tela "Rodar testes"
+   (spec html-extract-on-web-search, Req 11.3). O estado nunca depende só da
+   cor: .seletor-estado sempre diz "ligada", "desligada" ou "bloqueada".
+   Layout compacto (1 linha por seletor, ao lado de "Voltar ao menu") para que
+   os botões de sorteio e de casos fixos continuem visíveis em 80x24 abaixo do
+   banner fixo. */
+
+.cabecalho-execucao {
+    height: auto;
+}
+
+.seletores-execucao {
+    width: 1fr;
+    height: auto;
+    padding: 0 0 0 1;
+}
+
+.seletor-linha {
+    height: auto;
+}
+
+.seletor-rotulo {
+    width: 15;
+    color: $text;
+}
+
+.seletor-estado {
+    width: 1fr;
+    height: auto;
+    padding: 0 0 0 1;
+    color: $text-muted;
+}
+
+.seletores-execucao Switch {
+    height: 1;
+    padding: 0;
+    border: none;
+    background: $surface;
+}
+
+.seletores-execucao Switch:focus {
+    background: $border;
+    text-style: bold;
+}
+
+.seletores-execucao Switch.-on .switch--slider {
+    color: $accent-ai;
+}
+
+.seletores-execucao Switch:disabled {
+    opacity: 60%;
+}
+
+.aviso-config {
+    color: $accent-user;
+    height: auto;
+}

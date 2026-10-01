@@ -9,3 +9,5 @@ pyfiglet==1.0.4
 mcp==2.2.0
 # Dependência de teste: property-based testing das propriedades de corretude da Tool_Provedor_Informacao (spec information-provider-tool).
 hypothesis==6.168.1
+# Fallback de coleta stealth (tools/buscador_stealth.py): Chrome real via Patchright, só local/headed; importado de forma preguiçosa.
+patchright==1.63.0

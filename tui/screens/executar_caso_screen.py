@@ -12,13 +12,14 @@ Sem confirmação/edição humana ainda (isso é a Fase 4 "oficial") — só rod
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime
 
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Collapsible, ContentSwitcher, DataTable, RichLog, Static
+from textual.widgets import Button, Collapsible, ContentSwitcher, DataTable, Label, RichLog, Static, Switch
 
 from arbitration.models import DecisaoCampo
 from config import PROJECT_ROOT
@@ -31,6 +32,16 @@ from sql_generation.models import DecisaoMerge, GrupoSinalizado
 from tools.fk_introspection import FkDependency
 from tools.group_fetch import RegistroCatalogPart, resolver_brand_id
 from tools.sortear_grupo import sortear_grupo_aleatorio
+from tui.seletores_execucao import (
+    ConfigSeletoresTela,
+    EstadoSeletores,
+    OpcoesExecucao,
+    ler_config_seletores,
+    mensagem_configuracao,
+    texto_estado_coleta,
+    texto_estado_pesquisa,
+    texto_estado_stealth,
+)
 from tui.swatches import atribuir_cores, swatch
 from tui.intervencao_bridge import pedir_intervencao_bloqueante
 
@@ -204,6 +215,7 @@ class ExecutarCasoScreen(Vertical):
         dependencias_fk: list[FkDependency],
         rule_store: RuleStore | None = None,
         executar_caso_fn=executar_caso,
+        ler_config: Callable[[], ConfigSeletoresTela] = ler_config_seletores,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -212,9 +224,46 @@ class ExecutarCasoScreen(Vertical):
         self._rule_store = rule_store
         self._executar_caso_fn = executar_caso_fn
         self._avisos_texto: list[str] = []
+        # Configuração lida uma vez, só leitura (Req 11.16). O estado dos seletores
+        # vive nesta instância, que continua montada no ContentSwitcher ao voltar
+        # ao menu (Req 11.15).
+        self._config_seletores = ler_config()
+        self._seletores = EstadoSeletores.inicial(self._config_seletores)
 
     def compose(self) -> ComposeResult:
-        yield Button("← Voltar ao menu", id="btn-voltar")
+        # Seletores ao lado de "Voltar ao menu", uma linha cada, antes dos botões de
+        # sorteio e de casos fixos (Req 11.1): o banner fixo deixa só 12 linhas para
+        # esta tela em 80x24 e os botões precisam continuar visíveis. A terceira linha
+        # (Fallback stealth) vem logo depois de "Coleta de HTML" (Req 11.1 do stealth).
+        with Horizontal(classes="cabecalho-execucao"):
+            yield Button("← Voltar ao menu", id="btn-voltar")
+            with Vertical(id="seletores-execucao", classes="seletores-execucao"):
+                with Horizontal(classes="seletor-linha"):
+                    yield Label("Pesquisa web", classes="seletor-rotulo")
+                    yield Switch(
+                        value=self._seletores.pesquisa, animate=False,
+                        id="switch-pesquisa-web", tooltip="Pesquisa web",
+                    )
+                    yield Static("", id="estado-pesquisa-web", classes="seletor-estado")
+                with Horizontal(classes="seletor-linha"):
+                    yield Label("Coleta de HTML", classes="seletor-rotulo")
+                    yield Switch(
+                        value=self._seletores.coleta, animate=False,
+                        id="switch-coleta-html", tooltip="Coleta de HTML",
+                    )
+                    yield Static("", id="estado-coleta-html", classes="seletor-estado")
+                with Horizontal(classes="seletor-linha"):
+                    yield Label("Fallback stealth", classes="seletor-rotulo")
+                    yield Switch(
+                        value=self._seletores.stealth, animate=False,
+                        id="switch-fallback-stealth", tooltip="Fallback stealth",
+                    )
+                    yield Static("", id="estado-fallback-stealth", classes="seletor-estado")
+                aviso_config = Static(
+                    "\n".join(self._config_seletores.avisos), id="aviso-config-seletores", classes="aviso-config"
+                )
+                aviso_config.display = bool(self._config_seletores.avisos)
+                yield aviso_config
         yield Static(
             "Roda o pipeline completo (particiona -> arbitra campos -> gera SQL) pra um grupo "
             "e mostra o resultado. Nunca executa o SQL contra o banco.",
@@ -231,6 +280,44 @@ class ExecutarCasoScreen(Vertical):
         yield Button("📋 Copiar/salvar log da pesquisa web", id="btn-copiar-log", disabled=True)
         yield VerticalScroll(id="resultado-container")
 
+    def on_mount(self) -> None:
+        self._renderizar_seletores()
+
+    def _renderizar_seletores(self) -> None:
+        """Único ponto que escreve nos seletores: valor, `disabled` e texto de estado
+        vêm de `self._seletores` (Req 11.3, 11.8, 11.9, 11.13). `prevent` evita que a
+        atribuição de `value` gere um `Switch.Changed` de eco."""
+        estado = self._seletores
+        pesquisa = self.query_one("#switch-pesquisa-web", Switch)
+        coleta = self.query_one("#switch-coleta-html", Switch)
+        stealth = self.query_one("#switch-fallback-stealth", Switch)
+        with self.prevent(Switch.Changed):
+            pesquisa.value = estado.pesquisa
+            pesquisa.disabled = not estado.pesquisa_operavel
+            coleta.value = estado.coleta
+            coleta.disabled = not estado.coleta_operavel
+            stealth.value = estado.stealth
+            stealth.disabled = not estado.stealth_operavel
+        self.query_one("#estado-pesquisa-web", Static).update(
+            texto_estado_pesquisa(estado, self._config_seletores)
+        )
+        self.query_one("#estado-coleta-html", Static).update(texto_estado_coleta(estado))
+        self.query_one("#estado-fallback-stealth", Static).update(texto_estado_stealth(estado))
+
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        event.stop()
+        if event.switch.id == "switch-pesquisa-web":
+            self._seletores = self._seletores.alternar_pesquisa(event.value)
+        elif event.switch.id == "switch-coleta-html":
+            self._seletores = self._seletores.alternar_coleta(event.value)
+        elif event.switch.id == "switch-fallback-stealth":
+            self._seletores = self._seletores.alternar_stealth(event.value)
+        else:
+            return
+        # Se o modelo ignorou a mudança (seletor inoperável), a renderização devolve
+        # o Switch ao valor do modelo.
+        self._renderizar_seletores()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id
         if button_id == "btn-voltar":
@@ -244,13 +331,20 @@ class ExecutarCasoScreen(Vertical):
             self._copiar_log_avisos()
 
     def _iniciar_execucao(self, search_ref: str | None, brand: str | None) -> None:
+        self._seletores, opcoes = self._seletores.iniciar()
+        self._renderizar_seletores()
         self.query_one("#status", Static).update("Rodando... (pode levar alguns segundos)")
         avisos = self.query_one("#avisos-web", RichLog)
         avisos.clear()
-        avisos.display = False
-        self._avisos_texto = []
+        # Mensagem_Configuracao_Execucao como primeira linha do painel e do texto que
+        # "Copiar/salvar" grava (Req 11.17, 11.18, 8.7). O botão de copiar continua
+        # habilitado só a partir do primeiro aviso do pipeline.
+        mensagem = mensagem_configuracao(opcoes, self._config_seletores)
+        avisos.write(mensagem)
+        avisos.display = True
+        self._avisos_texto = [mensagem]
         self.query_one("#btn-copiar-log", Button).disabled = True
-        self._executar_worker(search_ref, brand)
+        self._executar_worker(search_ref, brand, opcoes)
 
     def _registrar_aviso(self, mensagem: str) -> None:
         self.app.call_from_thread(self._log_aviso, mensagem)
@@ -289,7 +383,7 @@ class ExecutarCasoScreen(Vertical):
         return pedir_intervencao_bloqueante(self.app, self._llm, pedido)
 
     @work(thread=True, exclusive=True)
-    def _executar_worker(self, search_ref: str | None, brand: str | None) -> None:
+    def _executar_worker(self, search_ref: str | None, brand: str | None, opcoes: OpcoesExecucao) -> None:
         try:
             if search_ref is None:
                 grupo_sorteado = sortear_grupo_aleatorio()
@@ -300,6 +394,8 @@ class ExecutarCasoScreen(Vertical):
             resultado = self._executar_caso_fn(
                 search_ref, brand_id, self._llm, self._dependencias_fk, rule_store=self._rule_store,
                 on_aviso=self._registrar_aviso, pedir_intervencao=self._pedir_intervencao,
+                pesquisa_web=opcoes.pesquisa_web, coleta_html=opcoes.coleta_html,
+                fallback_stealth=opcoes.fallback_stealth,
             )
         except Exception as exc:  # noqa: BLE001 - erro mostrado inline, TUI não pode cair
             self.app.call_from_thread(self._mostrar_erro, exc)
@@ -308,6 +404,8 @@ class ExecutarCasoScreen(Vertical):
         self.app.call_from_thread(self._mostrar_resultado, resultado)
 
     async def _mostrar_resultado(self, resultado: ResultadoCaso) -> None:
+        self._seletores = self._seletores.terminar()
+        self._renderizar_seletores()
         self.query_one("#status", Static).update("")
         container = self.query_one("#resultado-container", VerticalScroll)
         await container.remove_children()
@@ -334,6 +432,8 @@ class ExecutarCasoScreen(Vertical):
         await container.mount(*widgets)
 
     async def _mostrar_erro(self, exc: Exception) -> None:
+        self._seletores = self._seletores.terminar()
+        self._renderizar_seletores()
         self.query_one("#status", Static).update("")
         container = self.query_one("#resultado-container", VerticalScroll)
         await container.remove_children()

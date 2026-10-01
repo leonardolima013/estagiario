@@ -5,8 +5,10 @@ O `.env` deve apontar para uma réplica isolada, nunca para produção — ver S
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 
@@ -144,3 +146,146 @@ def serper_timeout() -> float:
     except (TypeError, ValueError):
         valor = 30.0
     return min(120.0, max(1.0, valor))
+
+
+# --- Coleta de páginas (spec html-extract-save) ---
+
+
+def paginas_db_path() -> Path:
+    """Caminho do arquivo SQLite do Armazem_Paginas (Req 7.10).
+
+    Sobrescrevível via ESTAGIARIO_PAGINAS_DB_PATH; por padrão vive em
+    db/paginas.db na raiz do projeto, distinto do arquivo do RuleStore.
+    """
+    override = os.environ.get("ESTAGIARIO_PAGINAS_DB_PATH")
+    if override:
+        return Path(override)
+    return PROJECT_ROOT / "db" / "paginas.db"
+
+
+def coleta_timeout() -> float:
+    """Timeout (s) de cada requisição do Buscador_Paginas (Req 5.4).
+
+    Lido de ESTAGIARIO_COLETA_TIMEOUT. Vale quando é numérico finito em
+    [1, 120]; caso contrário (ausente, não numérico, fora do intervalo)
+    devolve 15.0 — sem clamp, ao contrário de serper_timeout.
+    """
+    padrao = 15.0
+    bruto = os.environ.get("ESTAGIARIO_COLETA_TIMEOUT")
+    if bruto is None:
+        return padrao
+    try:
+        valor = float(bruto)
+    except (TypeError, ValueError):
+        return padrao
+    if not math.isfinite(valor) or not 1.0 <= valor <= 120.0:
+        return padrao
+    return valor
+
+
+def coleta_teto_aceitos() -> str | None:
+    """Valor bruto de ESTAGIARIO_COLETA_TETO_ACEITOS (None se ausente).
+
+    A validação fica em coleta_paginas.selecao.resolver_teto_aceitos, que
+    precisa relatar valor e origem do erro (Req 3.9).
+    """
+    return os.environ.get("ESTAGIARIO_COLETA_TETO_ACEITOS")
+
+
+def coleta_janela_reuso_dias() -> str | None:
+    """Valor bruto de ESTAGIARIO_COLETA_JANELA_REUSO_DIAS (None se ausente).
+
+    Validado em coleta_paginas.coletor.resolver_janela_reuso (Req 6.12).
+    """
+    return os.environ.get("ESTAGIARIO_COLETA_JANELA_REUSO_DIAS")
+
+
+
+# --- Coleta de páginas na pesquisa web (spec html-extract-on-web-search) ---
+
+EstadoChaveColeta = Literal["habilitada", "desabilitada", "invalida"]
+
+NOME_VAR_COLETA_HABILITADA = "ESTAGIARIO_COLETA_HABILITADA"
+
+_VALORES_HABILITADA = frozenset({"1", "true", "sim", "on"})
+_VALORES_DESABILITADA = frozenset({"0", "false", "nao", "não", "off"})
+
+
+def coleta_habilitada() -> EstadoChaveColeta:
+    """Chave_Habilitacao da coleta de páginas (Req 9.1, 9.2).
+
+    Lida de ESTAGIARIO_COLETA_HABILITADA no momento da chamada, com strip()
+    + casefold(). Ausente ou vazia devolve "habilitada"; 1/true/sim/on devolve
+    "habilitada"; 0/false/nao/não/off devolve "desabilitada"; qualquer outro
+    valor devolve "invalida" (a integração publica configuracao_invalida).
+    """
+    bruto = os.environ.get(NOME_VAR_COLETA_HABILITADA)
+    if bruto is None:
+        return "habilitada"
+    valor = bruto.strip().casefold()
+    if not valor or valor in _VALORES_HABILITADA:
+        return "habilitada"
+    if valor in _VALORES_DESABILITADA:
+        return "desabilitada"
+    return "invalida"
+
+
+
+# --- Fallback de coleta stealth (tools/buscador_stealth.py, isolado) ---
+
+DOMINIOS_STEALTH_PADRAO: frozenset[str] = frozenset({"mercadocar.com.br"})
+
+NOME_VAR_COLETA_STEALTH_HABILITADA = "ESTAGIARIO_COLETA_STEALTH_HABILITADA"
+
+
+def coleta_stealth_habilitada() -> EstadoChaveColeta:
+    """Chave_Stealth do fallback de coleta stealth (Req 1.1, 1.2).
+
+    Lida de ESTAGIARIO_COLETA_STEALTH_HABILITADA no momento da chamada, com
+    strip() + casefold(), reconhecendo os mesmos valores da Chave_Habilitacao
+    da coleta: 1/true/sim/on devolve "habilitada"; 0/false/nao/não/off devolve
+    "desabilitada"; qualquer outro valor devolve "invalida" (a integração
+    publica stealth_configuracao_invalida).
+
+    Diferença deliberada em relação a ``coleta_habilitada``: ausente ou vazia
+    devolve "desabilitada" — o fallback abre um navegador real e só liga por
+    decisão explícita do operador.
+    """
+    bruto = os.environ.get(NOME_VAR_COLETA_STEALTH_HABILITADA)
+    if bruto is None:
+        return "desabilitada"
+    valor = bruto.strip().casefold()
+    if not valor or valor in _VALORES_DESABILITADA:
+        return "desabilitada"
+    if valor in _VALORES_HABILITADA:
+        return "habilitada"
+    return "invalida"
+
+
+def coleta_dominios_stealth() -> frozenset[str]:
+    """Allowlist de domínios do fallback stealth (``tools.buscador_stealth``).
+
+    Lida de ESTAGIARIO_COLETA_DOMINIOS_STEALTH: lista separada por vírgula;
+    cada item passa por ``strip()`` + casefold e perde o ponto final; itens
+    vazios são ignorados. Ausente → ``{"mercadocar.com.br"}``. Presente e vazia
+    (ou só vírgulas/espaços) → conjunto vazio, que desliga o fallback. Novos
+    domínios só entram por decisão explícita do time de dados.
+    """
+    bruto = os.environ.get("ESTAGIARIO_COLETA_DOMINIOS_STEALTH")
+    if bruto is None:
+        return DOMINIOS_STEALTH_PADRAO
+    itens = (item.strip().casefold().rstrip(".") for item in bruto.split(","))
+    return frozenset(item for item in itens if item)
+
+
+def stealth_profile_dir() -> Path:
+    """Diretório do perfil persistente do Chrome usado pelo fallback stealth.
+
+    Sobrescrevível via ESTAGIARIO_STEALTH_PROFILE_DIR; por padrão é
+    ``browserscan/chrome-profile`` (o mesmo perfil validado em
+    ``browserscan/main.py``). Contém cookies/sessão: fica fora do git.
+    """
+    override = os.environ.get("ESTAGIARIO_STEALTH_PROFILE_DIR")
+    if override:
+        return Path(override)
+    return PROJECT_ROOT / "browserscan" / "chrome-profile"

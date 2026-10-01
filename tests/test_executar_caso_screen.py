@@ -247,12 +247,16 @@ async def test_botao_copiar_log_salva_arquivo_e_tenta_clipboard(tmp_path, monkey
         await pilot.click("#btn-copiar-log")
         await pilot.pause()
 
-        # tentativa de clipboard é best-effort, mas ainda deve ser chamada
-        assert textos_copiados == ["Nomes divergentes para 83061 (CITROEN): acionando verificação web."]
+        # tentativa de clipboard é best-effort, mas ainda deve ser chamada.
+        # Primeira linha: Mensagem_Configuracao_Execucao (Req 11.17, 11.18).
+        assert len(textos_copiados) == 1
+        linhas_copiadas = textos_copiados[0].split("\n")
+        assert linhas_copiadas[0].startswith("Configuração da execução:")
+        assert linhas_copiadas[1:] == ["Nomes divergentes para 83061 (CITROEN): acionando verificação web."]
 
         arquivos = list(tmp_path.glob("verificacao_web_*.log"))
         assert len(arquivos) == 1
-        assert arquivos[0].read_text(encoding="utf-8") == "Nomes divergentes para 83061 (CITROEN): acionando verificação web."
+        assert arquivos[0].read_text(encoding="utf-8") == textos_copiados[0]
 
         status = app.query_one("#status", Static)
         assert str(arquivos[0]) in str(status.renderable)

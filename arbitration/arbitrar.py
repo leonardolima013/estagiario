@@ -5,7 +5,7 @@ duplicata_real pela Fase 1 (particionar_grupo).
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from arbitration.application import arbitrar_application
 from arbitration.campo_numerico import arbitrar_campo_numerico
@@ -18,6 +18,9 @@ from llm.provider import LLMProvider
 from loop.tracing import TraceSink
 from memory.models import PedidoIntervencao, RespostaIntervencao
 from tools.group_fetch import RegistroCatalogPart
+
+if TYPE_CHECKING:
+    from arbitration.pesquisa_web import ContextoPesquisaWeb
 
 
 _CAMPOS_NUMERICOS = frozenset({"width", "depth", "height", "net_weight", "gross_weight", "ncm", "barcode"})
@@ -40,6 +43,8 @@ def arbitrar_campo(
     pedir_intervencao: Callable[[PedidoIntervencao], RespostaIntervencao] | None = None,
     limiar_intervencao: float = 0.45,
     trace: TraceSink | None = None,
+    *,
+    contexto_web: ContextoPesquisaWeb | None = None,
 ) -> DecisaoCampo:
     if not registros:
         raise ValueError("subcluster vazio")
@@ -58,7 +63,7 @@ def arbitrar_campo(
             registros, llm, rule_store, brand_id=brand_id,
             on_aviso=on_aviso, verificar_web=verificar_web,
             pedir_intervencao=pedir_intervencao, limiar_intervencao=limiar_intervencao,
-            trace=trace,
+            trace=trace, contexto_web=contexto_web,
         )
 
     if campo in _CAMPOS_DATA_DE_APPLICATION or campo in _CAMPOS_NUMERICOS:

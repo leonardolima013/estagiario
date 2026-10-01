@@ -38,25 +38,62 @@ def _llm_serper_padrao():
     return AnthropicProvider(model=config.web_verification_model(), cachear_system=True)
 
 
-def _default_serper() -> Callable:
-    from verification.serper_agent import verificar_nomenclatura_peca_serper
+def _resolver_llm_serper(on_evento: Callable[[str], None] | None):
+    """LLM padrão do sub-agente Serper, resolvido no momento da chamada; sem
+    LLM disponível, avisa e devolve None (fallback determinístico)."""
+    try:
+        return _llm_serper_padrao()
+    except Exception as exc:  # noqa: BLE001 — sem LLM, cai no fallback determinístico
+        if on_evento is not None:
+            on_evento(
+                f"Sub-agente Serper indisponível ({type(exc).__name__}); "
+                "usando decisão determinística."
+            )
+        return None
 
-    @functools.wraps(verificar_nomenclatura_peca_serper)
-    def verificar(codigo, marca, nomes_conflitantes, *, on_evento=None):
-        try:
-            llm = _llm_serper_padrao()
-        except Exception as exc:  # noqa: BLE001 — sem LLM, cai no fallback determinístico
-            if on_evento is not None:
-                on_evento(
-                    f"Sub-agente Serper indisponível ({type(exc).__name__}); "
-                    "usando decisão determinística."
-                )
-            llm = None
-        return verificar_nomenclatura_peca_serper(
+
+class VerificadorSerperPadrao:
+    """Verificador_Web padrão do método Serper.
+
+    `__call__` é o contrato simples `(codigo, marca, nomes, *, on_evento)`, com o
+    LLM do sub-agente criado no primeiro uso. `verificar_com_resultados` faz a
+    mesma verificação e também entrega os Resultados_Estruturados da pesquisa
+    (`VerificadorComResultados`, spec html-extract-on-web-search Req 1.6), sem
+    nova requisição. A skill é procurada em `verification.serper_agent` a cada
+    chamada, para que substituições no módulo (testes) valham."""
+
+    def __init__(self) -> None:
+        from verification import serper_agent
+
+        functools.update_wrapper(self, serper_agent.verificar_nomenclatura_peca_serper)
+
+    def __call__(self, codigo, marca, nomes_conflitantes, *, on_evento=None):
+        from verification import serper_agent
+
+        llm = _resolver_llm_serper(on_evento)
+        return serper_agent.verificar_nomenclatura_peca_serper(
             codigo, marca, nomes_conflitantes, on_evento=on_evento, llm=llm
         )
 
-    return verificar
+    def verificar_com_resultados(self, codigo, marca, nomes_conflitantes, *, on_evento=None):
+        from verification import serper_agent
+        from verification.resultados_estruturados import VerificacaoComResultados
+
+        llm = _resolver_llm_serper(on_evento)
+        capturados: list = []
+        resultado = serper_agent.verificar_nomenclatura_peca_serper(
+            codigo,
+            marca,
+            nomes_conflitantes,
+            on_evento=on_evento,
+            llm=llm,
+            on_resultados=capturados.append,
+        )
+        return VerificacaoComResultados(resultado, capturados[0] if capturados else None)
+
+
+def _default_serper() -> Callable:
+    return VerificadorSerperPadrao()
 
 
 def _default_playwright() -> Callable:

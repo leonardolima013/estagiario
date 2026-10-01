@@ -113,11 +113,18 @@ def verificar_nomenclatura_peca_serper(
     on_evento: Callable[[str], None] | None = None,
     llm: LLMProvider | None = None,
     cliente: ClienteSerper | None = None,
+    on_resultados: Callable[[tuple[ResultadoOrganico, ...]], None] | None = None,
 ) -> ResultadoVerificacao:
     """Verifica a nomenclatura da peça via API Serper + sub-agente LLM.
 
     Contrato idêntico ao da Skill_Playwright. `llm` e `cliente` são injetáveis
     para testes puros com fakes (sem rede, sem API real, sem LLM real).
+
+    `on_resultados`, quando fornecido, recebe uma única vez os resultados
+    orgânicos (na ordem devolvida pela API) logo após uma pesquisa realizada —
+    `ClienteSerper.buscar` devolveu uma lista, vazia ou não. Nunca é chamado
+    quando a pesquisa não acontece (entrada em branco, chave ausente, falha
+    de requisição). Não altera mensagens `on_evento`, retorno nem decisão.
     """
     # 1. Validação de entrada (R2.7, R3.2) — antes de qualquer requisição.
     if _em_branco(codigo):
@@ -146,6 +153,11 @@ def verificar_nomenclatura_peca_serper(
         return _inconclusivo(f"Falha ao consultar a API Serper: {exc}")
     except SerperAPIKeyAusenteError:
         return _inconclusivo("Configuração da chave de API Serper ausente.")
+
+    # Pesquisa_Realizada: entrega os Resultados_Pesquisa ao chamador, sem nova
+    # requisição e antes de qualquer mensagem/decisão.
+    if on_resultados is not None:
+        on_resultados(tuple(organicos))
 
     # Registra a resposta completa antes de qualquer decisão do sub-agente. A
     # mensagem usa representação JSON segura: evidencia é truncada pelo mesmo
