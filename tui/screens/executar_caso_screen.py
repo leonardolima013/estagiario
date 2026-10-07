@@ -14,17 +14,20 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 from datetime import datetime
+from time import perf_counter
 
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Collapsible, ContentSwitcher, DataTable, Label, RichLog, Static, Switch
+from textual.widgets import Button, Collapsible, ContentSwitcher, DataTable, Label, Static, Switch
 
 from arbitration.models import DecisaoCampo
 from config import PROJECT_ROOT
 from db.rule_store import RuleStore
 from llm.provider import LLMProvider
+from loop.models import AvisoEmitido, FamiliaSorteada, IteracaoConcluida, IteracaoIniciada, IteracaoStatus, agora_iso
+from loop.tracing import TraceCollector, TracingLLMProvider, envolver_intervencao
 from memory.models import PedidoIntervencao, RespostaIntervencao
 from partitioning.models import Subcluster
 from pipeline import ResultadoCaso, executar_caso
@@ -43,6 +46,7 @@ from tui.seletores_execucao import (
     texto_estado_stealth,
 )
 from tui.swatches import atribuir_cores, swatch
+from tui.execucao.widgets import ExecutionPanel
 from tui.intervencao_bridge import pedir_intervencao_bloqueante
 
 _LOGS_DIR = PROJECT_ROOT / "logs"
@@ -229,6 +233,8 @@ class ExecutarCasoScreen(Vertical):
         # ao menu (Req 11.15).
         self._config_seletores = ler_config()
         self._seletores = EstadoSeletores.inicial(self._config_seletores)
+        # Referência guardada: o worker publica no painel sem consultar o DOM.
+        self._painel = ExecutionPanel(id="painel-execucao")
 
     def compose(self) -> ComposeResult:
         # Seletores ao lado de "Voltar ao menu", uma linha cada, antes dos botões de
@@ -270,15 +276,20 @@ class ExecutarCasoScreen(Vertical):
             classes="panel-explicacao",
         )
         yield Button("🎲 Sortear grupo aleatório", id="btn-aleatorio", variant="primary")
-        with Horizontal():
+        with Horizontal(classes="casos-fixos"):
             for i, (titulo, _, _) in enumerate(_CASOS_FIXOS):
                 yield Button(titulo, id=f"btn-caso-{i}")
         yield Static("", id="status", classes="status-processando")
-        avisos = RichLog(id="avisos-web", classes="avisos-web-log")
-        avisos.display = False
-        yield avisos
         yield Button("📋 Copiar/salvar log da pesquisa web", id="btn-copiar-log", disabled=True)
-        yield VerticalScroll(id="resultado-container")
+        # Painel de execução e resultado final na mesma rolagem: o painel mostra o
+        # caso enquanto roda e, ao terminar sem pendências, recolhe para uma linha.
+        painel = self._painel
+        painel.display = False
+        resultado_final = Vertical(id="resultado-final")
+        resultado_final.styles.height = "auto"
+        with VerticalScroll(id="resultado-container"):
+            yield painel
+            yield resultado_final
 
     def on_mount(self) -> None:
         self._renderizar_seletores()
@@ -334,25 +345,23 @@ class ExecutarCasoScreen(Vertical):
         self._seletores, opcoes = self._seletores.iniciar()
         self._renderizar_seletores()
         self.query_one("#status", Static).update("Rodando... (pode levar alguns segundos)")
-        avisos = self.query_one("#avisos-web", RichLog)
-        avisos.clear()
         # Mensagem_Configuracao_Execucao como primeira linha do painel e do texto que
         # "Copiar/salvar" grava (Req 11.17, 11.18, 8.7). O botão de copiar continua
         # habilitado só a partir do primeiro aviso do pipeline.
         mensagem = mensagem_configuracao(opcoes, self._config_seletores)
-        avisos.write(mensagem)
-        avisos.display = True
+        painel = self.query_one("#painel-execucao", ExecutionPanel)
+        painel.limpar()
+        painel.definir_cabecalho(mensagem)
+        painel.display = True
         self._avisos_texto = [mensagem]
         self.query_one("#btn-copiar-log", Button).disabled = True
         self._executar_worker(search_ref, brand, opcoes)
 
     def _registrar_aviso(self, mensagem: str) -> None:
+        self._painel.publicar(AvisoEmitido(timestamp=agora_iso(), mensagem=mensagem))
         self.app.call_from_thread(self._log_aviso, mensagem)
 
     async def _log_aviso(self, mensagem: str) -> None:
-        log = self.query_one("#avisos-web", RichLog)
-        log.display = True
-        log.write(mensagem)
         self._avisos_texto.append(mensagem)
         self.query_one("#btn-copiar-log", Button).disabled = False
 
@@ -384,31 +393,59 @@ class ExecutarCasoScreen(Vertical):
 
     @work(thread=True, exclusive=True)
     def _executar_worker(self, search_ref: str | None, brand: str | None, opcoes: OpcoesExecucao) -> None:
+        painel = self._painel
+        familia: FamiliaSorteada | None = None
+        inicio = perf_counter()
         try:
             if search_ref is None:
                 grupo_sorteado = sortear_grupo_aleatorio()
                 search_ref, brand_id = grupo_sorteado.search_ref, grupo_sorteado.brand_id
+                brand = getattr(grupo_sorteado, "brand", None)
             else:
                 brand_id = resolver_brand_id(brand)
 
+            # Trace só para o painel (esta tela não grava auditoria): mesmos eventos
+            # que o loop registra, com o raciocínio do modelo transmitido ao vivo.
+            familia = FamiliaSorteada(search_ref, brand_id, brand or "")
+            painel.publicar(IteracaoIniciada(timestamp=agora_iso(), indice=1, total=1, familia=familia))
+            trace = TraceCollector(ouvinte=painel.publicar)
             resultado = self._executar_caso_fn(
-                search_ref, brand_id, self._llm, self._dependencias_fk, rule_store=self._rule_store,
-                on_aviso=self._registrar_aviso, pedir_intervencao=self._pedir_intervencao,
+                search_ref, brand_id, TracingLLMProvider(self._llm, trace), self._dependencias_fk,
+                rule_store=self._rule_store, on_aviso=self._registrar_aviso,
+                pedir_intervencao=envolver_intervencao(self._pedir_intervencao, trace), trace=trace,
                 pesquisa_web=opcoes.pesquisa_web, coleta_html=opcoes.coleta_html,
                 fallback_stealth=opcoes.fallback_stealth,
             )
         except Exception as exc:  # noqa: BLE001 - erro mostrado inline, TUI não pode cair
+            if familia is not None:
+                painel.publicar(IteracaoConcluida(
+                    timestamp=agora_iso(), indice=1, total=1, status=IteracaoStatus.ERRO, familia=familia,
+                    duracao_ms=(perf_counter() - inicio) * 1000,
+                    erro={"tipo": type(exc).__name__, "mensagem": str(exc)[:1000]},
+                ))
             self.app.call_from_thread(self._mostrar_erro, exc)
             return
 
+        painel.publicar(IteracaoConcluida(
+            timestamp=agora_iso(), indice=1, total=1, status=IteracaoStatus.SUCESSO, familia=familia,
+            pecas=len(resultado.grupo),
+            merges=sum(isinstance(d, DecisaoMerge) for d in resultado.decisoes),
+            sinalizados=sum(isinstance(d, GrupoSinalizado) for d in resultado.decisoes),
+            duracao_ms=(perf_counter() - inicio) * 1000,
+        ))
         self.app.call_from_thread(self._mostrar_resultado, resultado)
 
-    async def _mostrar_resultado(self, resultado: ResultadoCaso) -> None:
+    async def _limpar_resultado(self) -> Vertical:
+        self.query_one("#painel-execucao", ExecutionPanel).drenar_agora()
         self._seletores = self._seletores.terminar()
         self._renderizar_seletores()
         self.query_one("#status", Static).update("")
-        container = self.query_one("#resultado-container", VerticalScroll)
-        await container.remove_children()
+        area = self.query_one("#resultado-final", Vertical)
+        await area.remove_children()
+        return area
+
+    async def _mostrar_resultado(self, resultado: ResultadoCaso) -> None:
+        container = await self._limpar_resultado()
 
         if not resultado.grupo:
             await container.mount(Static("Nenhum registro encontrado pra esse grupo."))
@@ -430,11 +467,8 @@ class ExecutarCasoScreen(Vertical):
             widgets.append(Static(resultado.sql))
 
         await container.mount(*widgets)
+        self.query_one("#resultado-container", VerticalScroll).scroll_home(animate=False)
 
     async def _mostrar_erro(self, exc: Exception) -> None:
-        self._seletores = self._seletores.terminar()
-        self._renderizar_seletores()
-        self.query_one("#status", Static).update("")
-        container = self.query_one("#resultado-container", VerticalScroll)
-        await container.remove_children()
+        container = await self._limpar_resultado()
         await container.mount(Static(f"Erro: {exc}", classes="error-message"))

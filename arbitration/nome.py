@@ -23,7 +23,7 @@ from arbitration.pesquisa_web import (
 from arbitration.provedor_informacao import arbitrar_por_provedor
 from db.rule_store import RuleStore
 from llm.provider import LLMProvider
-from loop.tracing import TraceSink
+from loop.tracing import TraceSink, sinalizar_inicio
 from memory.intervencao import registrar_resposta_intervencao
 from memory.models import PedidoIntervencao, RespostaIntervencao
 from memory.recuperador import consultar_intervencao
@@ -407,6 +407,10 @@ def _arbitrar_nome_via_web(
             "acionando verificação web antes de decidir."
         )
 
+    sinalizar_inicio(
+        trace, "tool", "verificar_nomenclatura_peca",
+        {"codigo": codigo, "marca": marca, "nomes_conflitantes": nomes_conflitantes},
+    )
     chamada = invocar_verificador(
         verificar_web, codigo, marca, nomes_conflitantes, on_evento=on_aviso
     )
@@ -442,6 +446,7 @@ def _arbitrar_nome_via_web(
             ),
         )
         # A porta nunca levanta exceção; o desfecho é publicado por ela mesma.
+        sinalizar_inicio(trace, "tool", "coletar_paginas", {"codigo": codigo, "marca": marca})
         contexto_web.coleta.processar(ativacao, contexto=contexto_web, trace=trace)
 
     decisao_web = decisao_nome_da_verificacao_web(registros, resultado)

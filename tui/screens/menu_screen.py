@@ -19,8 +19,12 @@ from loop.executor import executar_loop
 from llm.provider import LLMProvider
 from pipeline import executar_caso
 from tools.fk_introspection import FkDependency
+from tui.screens.cabecalho import Cabecalho
 from tui.screens.executar_caso_screen import ExecutarCasoScreen
 from tui.screens.rodar_loop_screen import RodarLoopScreen
+
+# Telas que usam o cabeçalho compacto para dar espaço ao painel de execução.
+TELAS_EXECUCAO = frozenset({"executar-caso", "rodar-loop"})
 
 
 class MenuPrincipal(Vertical):
@@ -65,3 +69,10 @@ class MenuScreen(Vertical):
                 self._llm, self._dependencias_fk, rule_store=self._rule_store,
                 executar_loop_fn=self._executar_loop_fn, output_dir=self._output_dir, id="rodar-loop",
             )
+
+    def on_mount(self) -> None:
+        self.watch(self.query_one(ContentSwitcher), "current", self._ao_trocar_tela)
+
+    def _ao_trocar_tela(self, atual: str | None) -> None:
+        for cabecalho in self.app.query(Cabecalho):
+            cabecalho.compacto = atual in TELAS_EXECUCAO

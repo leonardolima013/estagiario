@@ -49,6 +49,11 @@ from verification.serper_decisao import (
 )
 
 
+PREFIXO_RESULTADO_ORGANICO = "Serper resultado orgânico:"
+"""Início das mensagens de evidência do Serper no `on_evento`; o painel de execução
+o usa para mostrar o JSON da linha recolhido."""
+
+
 def _emitir(on_evento: Callable[[str], None] | None, msg: str) -> None:
     if on_evento is not None:
         on_evento(msg)
@@ -86,7 +91,7 @@ def _emitir_resultados_organicos(
             "link": _sanitizar_evidencia(organico.link),
         }
         # ensure_ascii=False: acentos legíveis no log; controles (\n) seguem escapados.
-        mensagem = "Serper resultado orgânico: " + json.dumps(
+        mensagem = f"{PREFIXO_RESULTADO_ORGANICO} " + json.dumps(
             dados,
             ensure_ascii=False,
             separators=(",", ":"),

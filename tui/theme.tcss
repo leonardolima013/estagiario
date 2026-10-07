@@ -112,14 +112,6 @@ Button.-primary {
     text-style: bold;
 }
 
-.avisos-web-log {
-    height: auto;
-    max-height: 10;
-    border: solid $accent-tool;
-    color: $accent-tool;
-    margin: 1 0;
-}
-
 Collapsible {
     background: $surface;
     border: solid $border;
@@ -251,37 +243,244 @@ IntervencaoScreen {
     background: $surface;
 }
 
-#input-iteracoes {
-    width: 24;
-}
+/* Tela "Rodar loop": barra de controle de uma linha, linha de progresso e o
+   painel de execução no resto da altura (docs/refactor-painel/DESIGN.md §5). */
 
-.loop-controles {
+.barra-controle {
     height: auto;
-    padding: 1 0;
+    margin: 0 0 0 0;
 }
 
-#loop-progress {
-    width: 100%;
-    margin: 1 0;
+.barra-controle Button {
+    height: 1;
+    min-width: 6;
+    border: none;
+    padding: 0 1;
+    margin: 0 1 0 0;
+}
+
+.barra-controle Button.-primary {
+    background: $accent-user;
+    color: $background;
+}
+
+.barra-controle Button:disabled {
+    opacity: 50%;
+}
+
+.barra-controle Input {
+    height: 1;
+    width: 13;
+    border: none;
+    padding: 0 1;
+    margin: 0 1 0 0;
+}
+
+.barra-controle Input:focus {
+    background: $border;
 }
 
 #loop-status {
+    width: 1fr;
+    /* Uma linha no estado normal; mensagens longas para o operador (validação,
+       cancelamento, erro) quebram e a barra cresce em vez de cortar o texto. */
     height: auto;
     color: $accent-tool;
     text-style: bold;
 }
 
-#loop-contadores,
+#loop-linha-progresso {
+    height: 1;
+}
+
+#loop-progress {
+    width: 1fr;
+}
+
+#loop-progress Bar {
+    width: 1fr;
+}
+
+#loop-contadores {
+    width: auto;
+    height: 1;
+    padding: 0 0 0 1;
+    color: $text-muted;
+}
+
+#loop-rolagem {
+    height: 1fr;
+    border: round $border;
+    padding: 0 1;
+}
+
 #loop-arquivos {
     height: auto;
+    color: $text-muted;
+}
+
+/* Painel de execução (tui/execucao/widgets.py). O estado nunca depende só da
+   cor: cada linha começa por um glifo (✓ ✗ ⚠ ◆ ■ ou o spinner). */
+
+ExecutionPanel {
+    height: auto;
+}
+
+.painel-vazio {
+    color: $text-muted;
     padding: 1 0;
 }
 
-.loop-log {
-    height: 8;
-    border: solid $accent-tool;
+.painel-cabecalho {
+    color: $accent-tool;
+}
+
+.painel-ocultas {
+    color: $text-muted;
+}
+
+.painel-falha {
+    color: $accent-warning;
+}
+
+.family-block {
+    height: auto;
+}
+
+.familia-titulo {
     color: $text;
-    margin: 1 0;
+    text-style: bold;
+}
+
+.family-block:focus > .familia-titulo {
+    background: $border;
+}
+
+.family-block.-em-curso > .familia-titulo {
+    color: $accent-ai;
+}
+
+.family-block.-erro > .familia-titulo,
+.family-block.-sinalizada > .familia-titulo {
+    color: $accent-warning;
+}
+
+.family-block.-cancelada > .familia-titulo {
+    color: $text-muted;
+}
+
+.familia-corpo {
+    height: auto;
+    padding: 0 0 0 2;
+}
+
+.item-evento {
+    height: auto;
+}
+
+.item-evento:focus > .item-linha {
+    background: $border;
+}
+
+.item-linha {
+    color: $text;
+}
+
+.item-evento.-etapa > .item-linha,
+.item-evento.-info > .item-linha {
+    color: $accent-tool;
+}
+
+.item-evento.-raciocinio > .item-linha {
+    color: $accent-ai;
+}
+
+.item-evento.-intervencao > .item-linha {
+    color: $accent-user;
+}
+
+.item-evento.-sem-conflito > .item-linha,
+.item-evento.-aviso > .item-linha {
+    color: $text-muted;
+}
+
+.item-evento.-erro > .item-linha,
+.item-evento.-escalado > .item-linha {
+    color: $accent-warning;
+}
+
+.item-raciocinio {
+    color: $text;
+    padding: 0 0 0 2;
+}
+
+.item-detalhes {
+    color: $text-muted;
+    padding: 0 0 0 2;
+}
+
+.item-filhos {
+    height: auto;
+    padding: 0 0 0 2;
+}
+
+/* Tabelas da "Rodar loop": registros sorteados logo abaixo do título da família
+   e registro vencedor no fim, fora do corpo recolhível (altura e recuo das
+   seções ficam no DEFAULT_CSS do FamilyBlock). Sem a borda inteira do DataTable
+   global (duas linhas a menos por tabela em 80x24), só uma barra à esquerda;
+   tabela grande rola por dentro. */
+
+.tabela-legenda {
+    color: $text-muted;
+}
+
+.familia-vencedor > .tabela-legenda {
+    color: $accent-ai;
+    text-style: bold;
+}
+
+.familia-vencedor.-sem-vencedor > .tabela-legenda {
+    color: $text-muted;
+    text-style: none;
+}
+
+.tabela-registros,
+.tabela-vencedor {
+    border: none;
+    border-left: tall $border;
+    max-height: 45vh;
+}
+
+.tabela-vencedor {
+    border-left: tall $accent-ai;
+}
+
+.tabela-registros > .datatable--fixed,
+.tabela-vencedor > .datatable--fixed {
+    background: $surface;
+    color: $text;
+}
+
+/* Cabeçalho compacto nas telas de execução: uma linha, sempre visível. */
+
+#cabecalho-compacto {
+    display: none;
+    width: 100%;
+    color: $accent-ai;
+    text-style: bold;
+}
+
+Cabecalho.-compacto {
+    padding: 0 0 0 2;
+}
+
+Cabecalho.-compacto #cabecalho-banner,
+Cabecalho.-compacto #cabecalho-subtitulo {
+    display: none;
+}
+
+Cabecalho.-compacto #cabecalho-compacto {
+    display: block;
 }
 
 
@@ -293,6 +492,12 @@ IntervencaoScreen {
    banner fixo. */
 
 .cabecalho-execucao {
+    height: auto;
+}
+
+/* Linha dos casos fixos: altura do conteúdo (o padrão do Horizontal é 1fr, que
+   dividia a altura com a área de resultado e deixava linhas vazias). */
+.casos-fixos {
     height: auto;
 }
 

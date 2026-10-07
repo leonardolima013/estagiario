@@ -16,13 +16,14 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, ContentSwitcher, Label, RichLog, Static, Switch
+from textual.widgets import Button, ContentSwitcher, Label, Static, Switch
 
 import config
 import tui.screens.executar_caso_screen as modulo_tela
 from partitioning.models import Particao
 from pipeline import ResultadoCaso
 from tests.guarda_rede import guarda_rede_autouse  # noqa: F401
+from tui.execucao.widgets import ExecutionPanel
 from tui.screens.executar_caso_screen import ExecutarCasoScreen
 from tui.screens.menu_screen import MenuPrincipal
 from tui.seletores_execucao import ConfigSeletoresTela, TEXTO_COLETA_DEPENDENTE
@@ -252,7 +253,7 @@ async def test_estado_inicial_com_metodo_e_chave_invalidos():
         await _rodar_caso(app, pilot)
         _, kwargs = fake.chamadas[-1]
         assert kwargs["pesquisa_web"] is True and kwargs["coleta_html"] is True
-        primeira = app.query_one("#avisos-web", RichLog).lines[0].text.rstrip()
+        primeira = app.query_one("#painel-execucao", ExecutionPanel).linhas_visiveis()[0]
         assert "pesquisa web=ligada (método inválido: bingo)" in primeira
 
 
@@ -406,10 +407,15 @@ async def test_mensagem_configuracao_primeira_linha_do_painel_e_do_arquivo(tmp_p
             "Configuração da execução: pesquisa web=ligada (método serper), "
             "coleta de HTML=desligada, fallback stealth=desligado."
         )
-        log = app.query_one("#avisos-web", RichLog)
-        linhas = [linha.text.rstrip() for linha in log.lines]
+        painel = app.query_one("#painel-execucao", ExecutionPanel)
+        linhas = painel.linhas_visiveis()
         assert linhas[0] == esperado
-        assert any(aviso in linha for linha in linhas[1:])
+        # A linha da coleta vira resumo no painel, com o JSON nos detalhes; o texto
+        # original continua no log salvo.
+        (familia,) = painel.modelo.familias
+        (item_coleta,) = [i for i in familia.itens if i.tipo == "aviso"]
+        assert item_coleta.titulo == "Coleta · nao_executada (desabilitada)"
+        assert item_coleta.detalhes == {"desfecho": "nao_executada", "motivo": "desabilitada"}
 
         app.query_one("#btn-copiar-log", Button).press()
         await pilot.pause()
@@ -422,7 +428,7 @@ async def test_mensagem_configuracao_primeira_linha_do_painel_e_do_arquivo(tmp_p
         await pilot.press("space")
         await pilot.pause()
         await _rodar_caso(app, pilot)
-        linhas = [linha.text.rstrip() for linha in log.lines]
+        linhas = painel.linhas_visiveis()
         assert linhas[0] == (
             "Configuração da execução: pesquisa web=desligada, coleta de HTML=desligada, "
             "fallback stealth=desligado."

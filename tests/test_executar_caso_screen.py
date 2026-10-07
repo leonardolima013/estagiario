@@ -2,12 +2,13 @@ from datetime import datetime
 
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
-from textual.widgets import Button, Collapsible, DataTable, RichLog, Static
+from textual.widgets import Button, Collapsible, DataTable, Static
 
 from arbitration.models import DecisaoCampo
 from partitioning.models import Particao, Subcluster
 from pipeline import ResultadoCaso
 from sql_generation.models import DecisaoMerge
+from tui.execucao.widgets import ExecutionPanel
 from tui.screens.executar_caso_screen import ExecutarCasoScreen
 
 
@@ -197,21 +198,24 @@ class _AppComAviso(App):
         yield ExecutarCasoScreen(llm=None, dependencias_fk=[], executar_caso_fn=_executar_caso_com_aviso)
 
 
-async def test_aviso_de_verificacao_web_aparece_no_log_live():
+async def test_aviso_de_verificacao_web_aparece_no_painel_de_execucao():
     app = _AppComAviso()
     async with app.run_test() as pilot:
         await pilot.pause()
 
-        log = app.query_one("#avisos-web", RichLog)
-        assert log.display is False
+        painel = app.query_one("#painel-execucao", ExecutionPanel)
+        assert painel.display is False
 
         await pilot.click("#btn-caso-0")
         await app.workers.wait_for_complete()
         await pilot.pause()
 
-        assert log.display is True
-        linhas = [str(line) for line in log.lines]
-        assert any("acionando verificação web" in linha for linha in linhas)
+        assert painel.display is True
+        assert painel.linhas_visiveis()[0].startswith("Configuração da execução:")
+        (familia,) = painel.modelo.familias
+        avisos = [item.titulo for item in familia.itens if item.tipo == "aviso"]
+        assert avisos == ["Nomes divergentes para 83061 (CITROEN): acionando verificação web."]
+        assert familia.estado == "ok" and familia.merges == 1
 
 
 async def test_botao_copiar_log_desabilitado_sem_avisos():

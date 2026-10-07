@@ -83,7 +83,7 @@ def resultado_caso_para_json(resultado: Any | None) -> dict[str, Any] | None:
         "pecas": para_json(resultado.grupo),
         "particionamento": para_json(resultado.particao),
         "decisoes": [decisao_para_json(decisao) for decisao in resultado.decisoes],
-        "registro_final": [_registro_final(decisao, resultado.grupo) for decisao in resultado.decisoes],
+        "registro_final": [registro_final_para_json(decisao, resultado.grupo) for decisao in resultado.decisoes],
         "sql": {"gerado": bool(resultado.sql), "conteudo": resultado.sql},
     }
 
@@ -117,7 +117,13 @@ def decisao_para_json(decisao: Any) -> dict[str, Any]:
     }
 
 
-def _registro_final(decisao: Any, grupo: list[Any]) -> dict[str, Any]:
+def registro_final_para_json(decisao: Any, grupo: list[Any]) -> dict[str, Any]:
+    """`registro_final` de uma decisão: o vencedor com os valores depois do merge
+    (campo escalado mantém o valor do vencedor) ou o resumo do sinalizado.
+
+    O loop também manda esse dicionário ao painel ao vivo, em
+    `IteracaoConcluida.registros_finais`.
+    """
     por_id = {getattr(registro, "id", None): registro for registro in grupo}
     vencedor_id = getattr(decisao, "vencedor_id", None)
     if vencedor_id is None:
@@ -196,7 +202,7 @@ def _raciocinio_final(resultado: Any | None, grupo: list[Any]) -> list[dict[str,
         return []
     finais = []
     for decisao in getattr(resultado, "decisoes", []):
-        registro = _registro_final(decisao, grupo)
+        registro = registro_final_para_json(decisao, grupo)
         justificativas = [
             dc.justificativa
             for dc in getattr(decisao, "decisoes_campo", [])
@@ -241,7 +247,7 @@ def iteracao_para_json(iteracao: RegistroIteracao) -> dict[str, Any]:
         ],
         "raciocinios": _raciocinios_para_json(resultado, eventos),
         "decisoes": [decisao_para_json(decisao) for decisao in decisoes],
-        "registro_final": [_registro_final(decisao, iteracao.grupo) for decisao in decisoes],
+        "registro_final": [registro_final_para_json(decisao, iteracao.grupo) for decisao in decisoes],
         "raciocinio_final": _raciocinio_final(resultado, iteracao.grupo),
         "sql": {"gerado": bool(iteracao.sql), "conteudo": iteracao.sql},
         "erro": para_json(iteracao.erro),

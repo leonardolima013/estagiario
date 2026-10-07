@@ -9,7 +9,7 @@ existe a implementação Anthropic (`llm/anthropic_provider.py`).
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 
 class LLMProvider(Protocol):
@@ -21,6 +21,27 @@ class LLMProvider(Protocol):
         schema_name: str = "output",
     ) -> dict:
         """Pede ao modelo uma resposta estruturada em JSON, validada contra json_schema."""
+        ...
+
+
+class LLMProviderComStreaming(LLMProvider, Protocol):
+    """Provider que também sabe transmitir a resposta estruturada enquanto ela é gerada.
+
+    Opcional: só `loop.tracing.TracingLLMProvider` usa este método, e só quando
+    alguém acompanha a execução ao vivo. O domínio continua chamando `gerar_json`.
+    """
+
+    def gerar_json_transmitindo(
+        self,
+        system: str,
+        user: str,
+        json_schema: dict,
+        schema_name: str,
+        ao_atualizar: Callable[[dict], None],
+    ) -> dict:
+        """Mesmo contrato e mesmo retorno de `gerar_json`; `ao_atualizar` recebe o
+        JSON parcial interpretado (strings ainda abertas incluídas) a cada trecho
+        recebido. Exceções de `ao_atualizar` não interrompem a geração."""
         ...
 
 

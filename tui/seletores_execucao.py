@@ -4,8 +4,7 @@ Sem Textual: a tela (`tui/screens/executar_caso_screen.py`) só desenha o estado
 daqui. As regras de dependência (pesquisa desligada → coleta desligada e
 inoperável; coleta desligada → fallback stealth desligado e inoperável), de
 restauração das últimas escolhas e de bloqueio durante a execução ficam
-testáveis isoladamente e servem de especificação de paridade para o frontend
-React + Ink.
+testáveis isoladamente.
 """
 
 from __future__ import annotations

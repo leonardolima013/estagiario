@@ -83,6 +83,98 @@ class LoopProgresso:
     cancelando: bool = False
 
 
+# ---------------------------------------------------------------------------
+# Eventos ao vivo (painel de execução). Nenhum deles entra no JSON de auditoria:
+# o que é auditável continua sendo o `EventoExecucao` registrado pelo
+# `TraceCollector`. Estes só existem para quem acompanha a execução enquanto
+# ela acontece, e são sempre derivados de dados já sanitizados.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EtapaIniciada:
+    """Uma etapa começou. Ela termina no próximo `EventoExecucao` de mesmo `nome`."""
+
+    timestamp: str
+    fase: str
+    nome: str
+    detalhes: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RespostaParcial:
+    """Resposta estruturada de uma chamada LLM ainda sendo gerada.
+
+    `resposta` é o JSON parcial já interpretado e sanitizado como o trace. A
+    versão final é o `saida["resposta_estruturada"]` do `EventoExecucao` de fase
+    `llm` com o mesmo `nome` (o `schema_name` da chamada).
+    """
+
+    timestamp: str
+    nome: str
+    resposta: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class AvisoEmitido:
+    """Espelho de uma mensagem enviada ao `on_aviso` do pipeline."""
+
+    timestamp: str
+    mensagem: str
+
+
+@dataclass(frozen=True)
+class GrupoCarregado:
+    """Registros da família, assim que `buscar_grupo` os devolve.
+
+    Cada registro vem no formato que o JSON do loop grava em `pecas`
+    (`loop.serializacao.para_json`), sem truncar: são dados do catálogo, nunca
+    prompt nem segredo.
+    """
+
+    timestamp: str
+    grupo_ref: str
+    registros: tuple[dict[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
+class IteracaoIniciada:
+    timestamp: str
+    indice: int
+    total: int
+    familia: FamiliaSorteada
+
+
+@dataclass(frozen=True)
+class IteracaoConcluida:
+    timestamp: str
+    indice: int
+    total: int
+    status: IteracaoStatus
+    familia: FamiliaSorteada | None = None
+    pecas: int = 0
+    merges: int = 0
+    sinalizados: int = 0
+    duracao_ms: float | None = None
+    erro: dict[str, str] | None = None
+    # Um por merge da família, no formato de `registro_final` do JSON do loop
+    # (`loop.serializacao.registro_final_para_json`): o vencedor com os valores
+    # depois do merge. Vazio em erro, cancelamento ou família sem merge.
+    registros_finais: tuple[dict[str, Any], ...] = ()
+
+
+EventoAoVivo = (
+    EventoExecucao
+    | EtapaIniciada
+    | RespostaParcial
+    | AvisoEmitido
+    | GrupoCarregado
+    | IteracaoIniciada
+    | IteracaoConcluida
+    | LoopProgresso
+)
+
+
 @dataclass
 class RegistroIteracao:
     indice: int

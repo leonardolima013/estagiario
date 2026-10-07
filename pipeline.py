@@ -25,7 +25,7 @@ from coleta_paginas.integracao import (
 )
 from db.rule_store import RuleStore
 from llm.provider import LLMProvider
-from loop.tracing import TraceSink
+from loop.tracing import TraceSink, sinalizar_grupo, sinalizar_inicio
 from memory.models import PedidoIntervencao, RespostaIntervencao
 from partitioning.particionar import Particao, particionar_grupo
 from sql_generation.gerar_sql import gerar_sql
@@ -100,6 +100,7 @@ def executar_caso(
             on_aviso(mensagem)
 
     inicio = perf_counter()
+    sinalizar_inicio(trace, "tool", "buscar_grupo", {"search_ref": search_ref, "brand_id": brand_id})
     try:
         grupo = buscar_grupo(search_ref, brand_id)
     except Exception as exc:
@@ -120,8 +121,11 @@ def executar_caso(
         )
 
     grupo_ref = f"{search_ref}:{grupo[0].brand}" if grupo else f"{search_ref}:{brand_id}"
+    # Só ao vivo (tabela de registros da "Rodar loop"); não entra no trace auditável.
+    sinalizar_grupo(trace, grupo_ref, grupo)
 
     inicio = perf_counter()
+    sinalizar_inicio(trace, "tool", "particionar_grupo", {"grupo_ref": grupo_ref, "pecas": len(grupo)})
     try:
         particao = particionar_grupo(
             grupo, llm=llm, rule_store=rule_store, threshold_divergencia=threshold_divergencia
@@ -163,6 +167,10 @@ def executar_caso(
     decisoes_brutas = []
     for subcluster in subclusters_duplicata:
         inicio = perf_counter()
+        sinalizar_inicio(
+            trace, "tool", "montar_decisao_merge",
+            {"grupo_ref": grupo_ref, "membro_ids": subcluster.membro_ids},
+        )
         try:
             decisao = montar_decisao_merge(
                 grupo_ref,
@@ -253,6 +261,10 @@ def executar_caso(
     if len(distinct_ids) >= 2:
         registros_distintos = [por_id[membro_id] for membro_id in distinct_ids]
         inicio = perf_counter()
+        sinalizar_inicio(
+            trace, "arbitragem", "recuperar_distintos_name",
+            {"grupo_ref": grupo_ref, "membro_ids": distinct_ids},
+        )
         try:
             decisao_nome_recuperada = arbitrar_nome_recuperacao(
                 registros_distintos,
@@ -300,6 +312,10 @@ def executar_caso(
 
         if autorizada:
             inicio = perf_counter()
+            sinalizar_inicio(
+                trace, "tool", "montar_decisao_merge",
+                {"grupo_ref": grupo_ref, "membro_ids": distinct_ids},
+            )
             try:
                 decisao = montar_decisao_merge(
                     grupo_ref,
@@ -379,6 +395,7 @@ def executar_caso(
     decisoes = [d for d in decisoes_brutas if d is not None]
 
     inicio = perf_counter()
+    sinalizar_inicio(trace, "tool", "gerar_sql", {"grupo_ref": grupo_ref, "decisoes": len(decisoes)})
     sql = gerar_sql(decisoes, dependencias_fk) if decisoes else ""
     if trace is not None:
         trace.registrar(

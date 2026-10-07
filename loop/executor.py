@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from threading import Event
-from typing import Callable
+from time import perf_counter
+from typing import Any, Callable
 
 from db.rule_store import RuleStore
 from llm.provider import LLMProvider
 from loop.models import (
+    AvisoEmitido,
     FamiliaSorteada,
+    IteracaoConcluida,
+    IteracaoIniciada,
     IteracaoStatus,
     LoopConfig,
     LoopProgresso,
@@ -19,11 +23,11 @@ from loop.models import (
     ResultadoLoop,
     agora_iso,
 )
-from loop.serializacao import LoopOutputWriter
+from loop.serializacao import LoopOutputWriter, registro_final_para_json
 from loop.sql_saida import gerar_sql_loop, salvar_sql_atomico
-from loop.tracing import TraceCollector, TracingLLMProvider
+from loop.tracing import TraceCollector, TracingLLMProvider, envolver_intervencao
 from memory.models import PedidoIntervencao, RespostaIntervencao
-from sql_generation.models import GrupoSinalizado
+from sql_generation.models import DecisaoMerge, GrupoSinalizado
 from tools.fk_introspection import FkDependency
 from tools.sortear_grupo import NenhumGrupoDuplicadoError, sortear_grupo_aleatorio
 
@@ -49,6 +53,44 @@ def _emitir(callback, progresso: LoopProgresso) -> None:
         pass
 
 
+def _protegido(callback: Callable[[object], None] | None) -> Callable[[object], None] | None:
+    """Versão do callback ao vivo que nunca levanta exceção (mesma regra de `_emitir`)."""
+    if callback is None:
+        return None
+
+    def _chamar(evento: object) -> None:
+        try:
+            callback(evento)
+        except Exception:  # noqa: BLE001
+            pass
+
+    return _chamar
+
+
+def _contar_decisoes(iteracao: RegistroIteracao) -> tuple[int, int]:
+    decisoes = iteracao.resultado_caso.decisoes if iteracao.resultado_caso else []
+    merges = sum(isinstance(d, DecisaoMerge) for d in decisoes)
+    sinalizados = sum(isinstance(d, GrupoSinalizado) for d in decisoes)
+    return merges, sinalizados
+
+
+def _registros_finais(iteracao: RegistroIteracao) -> tuple[dict[str, Any], ...]:
+    """`registro_final` de cada merge da iteração, o mesmo que o JSON grava.
+
+    Só alimenta o painel ao vivo; uma falha aqui vira tupla vazia, nunca erro
+    da iteração.
+    """
+    decisoes = iteracao.resultado_caso.decisoes if iteracao.resultado_caso else []
+    try:
+        return tuple(
+            registro_final_para_json(decisao, iteracao.grupo)
+            for decisao in decisoes
+            if isinstance(decisao, DecisaoMerge)
+        )
+    except Exception:  # noqa: BLE001
+        return ()
+
+
 def executar_loop(
     config: LoopConfig,
     llm: LLMProvider,
@@ -62,12 +104,33 @@ def executar_loop(
     on_aviso: Callable[[str], None] | None = None,
     pedir_intervencao: Callable[[PedidoIntervencao], RespostaIntervencao] | None = None,
     cancel_event: Event | None = None,
+    on_evento_ao_vivo: Callable[[object], None] | None = None,
 ) -> ResultadoLoop:
-    """Executa até N tentativas, sem repetir família e sem aplicar SQL."""
+    """Executa até N tentativas, sem repetir família e sem aplicar SQL.
+
+    ``on_evento_ao_vivo`` recebe, na thread do loop, os eventos de
+    `loop.models.EventoAoVivo`: início e fim de cada família, cada evento do
+    trace no momento do registro, os sinais de etapa e de resposta parcial do
+    LLM, os registros da família (`GrupoCarregado`) e uma cópia de cada aviso.
+    O fim da família (`IteracaoConcluida`) traz o registro final de cada merge.
+    Nada disso muda o JSON nem o SQL do loop, e uma falha do callback é
+    ignorada.
+    """
     if executar_caso_fn is None:
         from pipeline import executar_caso as executar_caso_fn_real
         executar_caso_fn = executar_caso_fn_real
     cancel_event = cancel_event or Event()
+    ao_vivo = _protegido(on_evento_ao_vivo)
+    aviso_caso = on_aviso
+    if ao_vivo is not None:
+        def aviso_caso(mensagem: str) -> None:
+            ao_vivo(AvisoEmitido(timestamp=agora_iso(), mensagem=mensagem))
+            if on_aviso is not None:
+                on_aviso(mensagem)
+
+    def emitir_ao_vivo(evento: object) -> None:
+        if ao_vivo is not None:
+            ao_vivo(evento)
     resultado = ResultadoLoop(
         run_id=_run_id(),
         status=LoopStatus.EM_ANDAMENTO,
@@ -119,6 +182,12 @@ def executar_loop(
             resultado.iteracoes.append(iteracao)
             writer.registrar_iteracao(resultado, iteracao)
             salvar_sql_atomico(writer.caminho_sql, gerar_sql_loop(resultado.iteracoes, config.iteracoes))
+            emitir_ao_vivo(
+                IteracaoConcluida(
+                    timestamp=agora_iso(), indice=indice, total=config.iteracoes,
+                    status=iteracao.status, erro=iteracao.erro,
+                )
+            )
             _emitir(
                 on_progresso,
                 LoopProgresso(
@@ -138,7 +207,13 @@ def executar_loop(
             continue
         vistas.add(familia.chave)
         indice += 1
-        trace = TraceCollector()
+        inicio_iteracao = perf_counter()
+        emitir_ao_vivo(
+            IteracaoIniciada(
+                timestamp=agora_iso(), indice=indice, total=config.iteracoes, familia=familia,
+            )
+        )
+        trace = TraceCollector(ouvinte=ao_vivo)
         trace.registrar(
             "loop", "sortear_grupo_aleatorio",
             entrada={"familias_excluidas": len(vistas)},
@@ -160,35 +235,14 @@ def executar_loop(
                 erros=resultado.iteracoes_com_erro,
             ),
         )
-        def pedir_intervencao_trace(pedido):
-            if pedir_intervencao is None:
-                return None
-            resposta = pedir_intervencao(pedido)
-            trace.registrar(
-                "intervencao", "intervencao_humana",
-                entrada={
-                    "ponto": pedido.ponto,
-                    "grupo_ref": pedido.grupo_ref,
-                    "nomes_conflitantes": pedido.nomes_conflitantes,
-                    "motivo": pedido.motivo,
-                },
-                saida={
-                    "resposta_humana": resposta.resposta_humana,
-                    "regra": resposta.regra,
-                    "valor": resposta.valor,
-                    "origem_id": resposta.origem_id,
-                    "acao": resposta.acao,
-                },
-                justificativa=resposta.resposta_humana,
-            )
-            return resposta
+        pedir_intervencao_trace = envolver_intervencao(pedir_intervencao, trace)
 
         llm_iteracao = TracingLLMProvider(llm, trace)
         try:
             kwargs = {
                 "rule_store": rule_store,
-                "on_aviso": on_aviso,
-                "pedir_intervencao": pedir_intervencao_trace if pedir_intervencao is not None else None,
+                "on_aviso": aviso_caso,
+                "pedir_intervencao": pedir_intervencao_trace,
                 "trace": trace,
                 # Sinal_Cancelamento repassado ao caso (Req 6.6): a coleta de páginas
                 # consulta o mesmo evento que o loop verifica entre iterações.
@@ -222,6 +276,18 @@ def executar_loop(
             resultado.iteracoes.append(iteracao)
             writer.registrar_iteracao(resultado, iteracao)
             salvar_sql_atomico(writer.caminho_sql, gerar_sql_loop(resultado.iteracoes, config.iteracoes))
+            if ao_vivo is not None:
+                merges, sinalizados = _contar_decisoes(iteracao)
+                emitir_ao_vivo(
+                    IteracaoConcluida(
+                        timestamp=agora_iso(), indice=indice, total=config.iteracoes,
+                        status=iteracao.status, familia=familia, pecas=len(iteracao.grupo),
+                        merges=merges, sinalizados=sinalizados,
+                        duracao_ms=(perf_counter() - inicio_iteracao) * 1000,
+                        erro=iteracao.erro,
+                        registros_finais=_registros_finais(iteracao),
+                    )
+                )
             _emitir(
                 on_progresso,
                 LoopProgresso(

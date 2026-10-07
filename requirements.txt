@@ -5,6 +5,8 @@ textual==0.86.3
 pytest==9.1.1
 pytest-asyncio==1.4.0
 anthropic==1.5.0
+# Parser de JSON parcial do streaming de tool_use (llm/anthropic_provider.py). Já é dependência do anthropic; pinado porque agora é importado diretamente.
+jiter==0.17.0
 pyfiglet==1.0.4
 mcp==2.2.0
 # Dependência de teste: property-based testing das propriedades de corretude da Tool_Provedor_Informacao (spec information-provider-tool).

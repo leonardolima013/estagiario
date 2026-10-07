@@ -14,7 +14,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Label, RichLog, Static
+from textual.widgets import Button, Label, Static
 
 import config
 import tui.screens.executar_caso_screen as modulo_tela
@@ -30,6 +30,7 @@ from tests.test_executar_caso_screen_seletores import (
     _texto,
 )
 from tui.seletores_execucao import ConfigSeletoresTela, TEXTO_STEALTH_DEPENDENTE
+from tui.execucao.widgets import ExecutionPanel
 
 _SW_STEALTH = "switch-fallback-stealth"
 _ESTADO_STEALTH = "estado-fallback-stealth"
@@ -73,7 +74,7 @@ async def _espaco(app, pilot, id_: str) -> None:
 
 
 def _primeira_linha(app) -> str:
-    return app.query_one("#avisos-web", RichLog).lines[0].text.rstrip()
+    return app.query_one("#painel-execucao", ExecutionPanel).linhas_visiveis()[0]
 
 
 # ---------------------------------------------------------------- 11.1
