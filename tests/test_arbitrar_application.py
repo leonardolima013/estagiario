@@ -98,4 +98,30 @@ def test_registros_sem_application_nao_quebram(fazer_registro, sem_banco):
 
     decisao = arbitrar_application(registros, brand_id=_BRAND_ID)
 
-    assert decisao.valor is None
+    assert decisao.valor == ""
+
+
+def test_todos_sem_application_none_continua_none(fazer_registro, sem_banco):
+    registros = [fazer_registro(1, "X", application=None), fazer_registro(2, "Y", application=None)]
+
+    assert arbitrar_application(registros, brand_id=_BRAND_ID).valor is None
+
+
+def test_application_vazia_em_todos_nao_gera_update_de_null(fazer_registro, sem_banco):
+    # Iteração 139 do log-200 (3PF2324/CORVEN): os três registros tinham application=''
+    # e o merge gerou SET "application" = NULL numa coluna NOT NULL.
+    from sql_generation.gerar_sql import gerar_sql
+    from sql_generation.models import DecisaoMerge
+
+    registros = [fazer_registro(i, "X", application="") for i in (1, 2, 3)]
+    decisao = arbitrar_application(registros, brand_id=_BRAND_ID)
+    merge = DecisaoMerge(
+        grupo_ref="3PF2324:CORVEN",
+        vencedor_id=1,
+        perdedor_ids=[2, 3],
+        decisoes_campo=[decisao],
+        valores_atuais_vencedor={"application": ""},
+    )
+
+    assert decisao.valor == ""
+    assert "UPDATE catalog_part SET" not in gerar_sql([merge], [])

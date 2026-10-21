@@ -60,7 +60,15 @@ def arbitrar_application(
             vistas.add(chave)
             linhas_finais.append(linha)
 
-    valor = "\n".join(linhas_finais) if linhas_finais else None
+    # catalog_part.application é NOT NULL e costuma vir como '' sem conteúdo:
+    # sem nenhuma linha, devolver None faria o merge diff-only gerar
+    # SET "application" = NULL no vencedor (bug real, iteração 139 do log-200).
+    if linhas_finais:
+        valor = "\n".join(linhas_finais)
+    elif any(registro.application is not None for registro in registros):
+        valor = ""
+    else:
+        valor = None
     return DecisaoCampo(
         campo="application",
         valor=valor,
