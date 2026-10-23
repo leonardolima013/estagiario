@@ -358,6 +358,7 @@ class ColetorPaginas:
         cancelado: Callable[[], bool] | None = None,
         observador: Observador | None = None,
         stealth: bool = False,
+        reputacao: bool = False,
     ) -> RelatorioColeta:
         """Coleta as páginas de uma peça e devolve o relatório (Req 1.6–1.8, 6).
 
@@ -371,6 +372,14 @@ class ColetorPaginas:
         sem fallback. Com ``True``, cada fonte não reaproveitada passa pela
         reputação e, se bloqueada na camada urllib e elegível, pelo
         Fallback_Stealth; entradas e eventos levam os Campos_Stealth.
+
+        ``reputacao`` (só tem efeito com ``stealth=False``) liga a reputação de
+        domínio na camada urllib sem o fallback: um domínio cujas 3 tentativas
+        urllib mais recentes falharam (403/429/503, rede, timeout) vira
+        ``falha``/``dominio_excluido`` sem rede, e cada busca urllib grava a
+        Tentativa_Fetch. Entradas e eventos não ganham os Campos_Stealth. É o
+        que o loop usa para não insistir em sites que bloqueiam (auditoria de
+        memória, N3).
         """
         # (a) Código inválido falha antes de tudo (Req 1.5).
         validar_codigo_peca(peca)
@@ -414,7 +423,7 @@ class ColetorPaginas:
             if cancelado is not None and cancelado():
                 entrada = self._entrada_falha(peca, fonte, MOTIVO_CANCELADO, None)
             else:
-                entrada = self._processar_fonte(peca, fonte, janela, execucao)
+                entrada = self._processar_fonte(peca, fonte, janela, execucao, reputacao=reputacao)
             self._registrar_entrada(entradas, entrada, observador, stealth=stealth)
         for exclusao in selecao.excluidas:
             self._registrar_entrada(
@@ -464,6 +473,8 @@ class ColetorPaginas:
         fonte: FonteSelecionada,
         janela_dias: int,
         execucao: _ExecucaoStealth | None = None,
+        *,
+        reputacao: bool = False,
     ) -> EntradaRelatorio:
         """Reuso dentro da janela ou busca + gravação; nunca levanta erro de
         armazenamento nem de transporte (Req 6.2, 6.3, 6.5, 6.6, 6.11, 6.13).
@@ -485,7 +496,13 @@ class ColetorPaginas:
         if execucao is not None:
             return self._processar_com_stealth(peca, fonte, url_original, agora, execucao)
 
+        dominio = normalizar_dominio(fonte.dominio) if reputacao else ""
+        if reputacao and self._excluida(dominio, CAMADA_URLLIB):
+            return self._entrada_falha(peca, fonte, MOTIVO_DOMINIO_EXCLUIDO, None)
+
         desfecho = self._buscador.buscar(url_original)
+        if reputacao:
+            self._registrar_tentativa(dominio, CAMADA_URLLIB, desfecho)
         if isinstance(desfecho, FalhaBusca):
             return self._entrada_falha(peca, fonte, desfecho.motivo, desfecho.status_http)
         return self._gravar(peca, fonte, desfecho, agora)

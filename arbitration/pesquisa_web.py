@@ -84,3 +84,6 @@ class ContextoPesquisaWeb:
     # Stealth_Efetivo (spec stealth-fallback-integration): só lido pela
     # IntegracaoColeta; a arbitragem não usa este campo.
     stealth_efetivo: EstadoColeta = "desabilitada"
+    # Reputação de domínio na camada urllib sem o fallback stealth: o loop liga
+    # para não insistir em sites que bloqueiam. Só lido pela IntegracaoColeta.
+    reputacao_dominios: bool = False

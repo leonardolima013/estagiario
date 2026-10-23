@@ -61,3 +61,13 @@ def test_erro_de_banco_nao_e_confundido_com_exaustao(monkeypatch):
 
     with pytest.raises(ConnectionError, match="banco indisponível"):
         sortear_grupo_aleatorio()
+
+
+def test_sorteio_so_conta_pecas_ativas():
+    # O filtro fica dentro da subquery, antes do COUNT(*) OVER: uma família com
+    # só uma peça ACTIVE (o resto já inativado) não é mais sorteada.
+    from tools import sortear_grupo
+
+    interna, _, externa = sortear_grupo._QUERY_BASE.partition(") t")
+    assert "cp.lifecycle_status = 'ACTIVE'" in interna
+    assert "lifecycle_status" not in externa

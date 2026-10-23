@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from tools.db_query import consultar_banco
+from tools.db_query import consultar_banco, memo_sessao
 
 NivelConfiabilidade = Literal["alta", "media", "baixa", "minima"]
 
@@ -148,26 +148,41 @@ def buscar_fonte_atual(part_id: int, campo: str) -> FonteCampo:
     return resolver_fonte_de_linhas(linhas)
 
 
+# Os três lookups abaixo são dados de referência (provider, owner e marca →
+# manufacturer): dentro de uma `sessao_banco()` (o loop) ficam em cache, porque a
+# mesma marca é consultada para cada registro e campo do grupo. Fora de sessão,
+# consultam sempre.
+
+
 def buscar_info_provider(provider_id: int) -> InfoProvider | None:
-    resultado = consultar_banco(_QUERY_PROVIDER, params={"provider_id": provider_id})
-    if not resultado.rows:
-        return None
-    nome, manufacturer_id = resultado.rows[0]
-    return InfoProvider(nome=nome, manufacturer_id=manufacturer_id)
+    def consultar() -> InfoProvider | None:
+        resultado = consultar_banco(_QUERY_PROVIDER, params={"provider_id": provider_id})
+        if not resultado.rows:
+            return None
+        nome, manufacturer_id = resultado.rows[0]
+        return InfoProvider(nome=nome, manufacturer_id=manufacturer_id)
+
+    return memo_sessao(("reliability.provider", provider_id), consultar)
 
 
 def buscar_manufacturer_do_owner(owner_id: int) -> int | None:
-    resultado = consultar_banco(_QUERY_OWNER_MANUFACTURER, params={"owner_id": owner_id})
-    if not resultado.rows:
-        return None
-    return resultado.rows[0][0]
+    def consultar() -> int | None:
+        resultado = consultar_banco(_QUERY_OWNER_MANUFACTURER, params={"owner_id": owner_id})
+        if not resultado.rows:
+            return None
+        return resultado.rows[0][0]
+
+    return memo_sessao(("reliability.owner", owner_id), consultar)
 
 
 def buscar_manufacturer_da_marca(brand_id: int) -> int | None:
-    resultado = consultar_banco(_QUERY_BRAND_MANUFACTURER, params={"brand_id": brand_id})
-    if not resultado.rows:
-        return None
-    return resultado.rows[0][0]
+    def consultar() -> int | None:
+        resultado = consultar_banco(_QUERY_BRAND_MANUFACTURER, params={"brand_id": brand_id})
+        if not resultado.rows:
+            return None
+        return resultado.rows[0][0]
+
+    return memo_sessao(("reliability.marca", brand_id), consultar)
 
 
 def nivel_confiabilidade(

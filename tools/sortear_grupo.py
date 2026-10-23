@@ -4,7 +4,8 @@ precisar escolher um search_ref+brand_id manualmente.
 Mesma lógica do "Caso 1" de context_files/sortear_pecas_duplicadas.py (grupos de
 search_ref+brand_id com mais de 1 registro), mas o sorteio é resolvido dentro do
 SQL (ORDER BY random() LIMIT 1) — evita trazer os ~321 mil registros duplicados
-pro Python só pra escolher um.
+pro Python só pra escolher um. Só conta peças `ACTIVE`, como buscar_grupo: uma
+família cujos perdedores já foram inativados deixa de ser sorteada.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ FROM (
     FROM catalog_part cp
     JOIN manufacturer_brand mb ON mb.id = cp.brand_id
     WHERE cp.search_ref IS NOT NULL AND cp.search_ref <> ''
+        AND cp.lifecycle_status = 'ACTIVE'
 ) t
 WHERE qtd_duplicados > 1
 """

@@ -118,3 +118,22 @@ def test_anexar_indices_unicos_filtra_por_coluna_e_ignora_expressao():
     assert [i.nome for i in resultado[1].indices_unicos] == ["ambas"]
     assert resultado[1].indices_unicos[0].predicado == "(x IS NULL)"
     assert resultado[2].indices_unicos == ()
+
+
+def test_filtro_extra_entra_so_no_update_da_tabela_indicada():
+    from psycopg import sql
+
+    dependencias = [
+        FkDependency(tabela_dependente="dealer_stock", coluna_fk="part_id", nome_constraint="fk1"),
+        FkDependency(tabela_dependente="catalog_partowner", coluna_fk="part_id", nome_constraint="fk2"),
+    ]
+
+    statements = gerar_updates_fk(
+        dependencias, vencedor_id=1, perdedor_ids=[2],
+        filtros_extras={"dealer_stock": sql.SQL('"status" = 0')},
+    )
+
+    assert statements == [
+        'UPDATE "dealer_stock" SET "part_id" = 1 WHERE "part_id" IN (2) AND "status" = 0;',
+        'UPDATE "catalog_partowner" SET "part_id" = 1 WHERE "part_id" IN (2);',
+    ]

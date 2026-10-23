@@ -6,6 +6,8 @@ Fakes em memória; nenhum teste acessa rede, banco ou LLM real.
 
 from __future__ import annotations
 
+import json
+
 from typing import Any
 
 import pytest
@@ -23,7 +25,7 @@ from loop.models import (
     LoopConfig,
     RespostaParcial,
 )
-from loop.serializacao import iteracao_para_json, para_json
+from loop.serializacao import para_json
 from loop.tracing import (
     TraceCollector,
     TracingLLMProvider,
@@ -358,9 +360,12 @@ def test_auditoria_do_loop_nao_muda_com_o_canal_ao_vivo(tmp_path):
         on_evento_ao_vivo=lambda _e: None, **kwargs,
     )
 
-    assert [_sem_volateis(iteracao_para_json(i)) for i in com.iteracoes] == [
-        _sem_volateis(iteracao_para_json(i)) for i in sem.iteracoes
-    ]
+    def iteracoes_gravadas(resultado):
+        documento = json.loads(resultado.caminho_json.read_text(encoding="utf-8"))
+        return _sem_volateis(documento["iteracoes"])
+
+    assert iteracoes_gravadas(com) == iteracoes_gravadas(sem)
+    assert len(iteracoes_gravadas(com)) == 2
 
 
 def test_erro_de_sorteio_vira_iteracao_concluida_com_erro(tmp_path):
@@ -390,7 +395,10 @@ def test_loop_ao_vivo_manda_os_registros_e_o_registro_final_iguais_ao_json(tmp_p
         sortear_fn=_sorter(familias), executar_caso_fn=CasoRoteirizado(), on_evento_ao_vivo=recebidos.append,
     )
 
-    documentos = [iteracao_para_json(iteracao) for iteracao in resultado.iteracoes]
+    # O executor esvazia cada iteração depois de gravá-la: a comparação é com o
+    # JSON de auditoria que de fato foi gravado.
+    publicado = json.loads(resultado.caminho_json.read_text(encoding="utf-8"))
+    documentos = [publicado["iteracoes"][str(i)] for i in (1, 2)]
     grupos = [e for e in recebidos if isinstance(e, GrupoCarregado)]
     concluidas = [e for e in recebidos if isinstance(e, IteracaoConcluida)]
     assert [list(g.registros) for g in grupos] == [d["pecas"] for d in documentos]

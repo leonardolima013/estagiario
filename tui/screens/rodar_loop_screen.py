@@ -6,6 +6,11 @@ mostra cada família enquanto ela roda: etapas, raciocínio do modelo, decisões
 por campo e avisos (docs/refactor-painel/DESIGN.md). Cada família tem também a
 tabela dos registros sorteados e, ao terminar, a do registro vencedor, que
 continuam visíveis com a família recolhida.
+
+As famílias vêm da fila local (`loop.fila`), da menor para a maior. O botão
+"Intervenção" da linha de progresso alterna entre interativa (a modal abre
+quando a pesquisa web é inconclusiva) e não interativa (o caso fica escalado e
+vai para `output/escalados_humano/`).
 """
 
 from __future__ import annotations
@@ -40,6 +45,8 @@ _MOTIVOS = {
     MotivoParada.ERRO_FATAL: "erro fatal",
 }
 _SEGUNDOS_STATUS_TEMPORARIO = 4.0
+ROTULO_INTERATIVA = "Intervenção: interativa"
+ROTULO_NAO_INTERATIVA = "Intervenção: não interativa"
 
 
 def _caminho_curto(caminho: Path | None) -> str:
@@ -70,6 +77,7 @@ class RodarLoopScreen(Vertical):
         self._cancel_event: Event | None = None
         self._worker = None
         self._status_fixo_ate = 0.0
+        self._interativo = True
         self._painel = ExecutionPanel(
             vazio=TEXTO_VAZIO, ao_progresso=self._atualizar_progresso, mostrar_registros=True,
             id="loop-painel",
@@ -83,6 +91,7 @@ class RodarLoopScreen(Vertical):
             yield Button("■ Cancelar", id="btn-cancelar-loop", disabled=True)
             yield Static("Aguardando número de iterações.", id="loop-status", classes="status-processando")
         with Horizontal(id="loop-linha-progresso"):
+            yield Button(ROTULO_INTERATIVA, id="btn-intervencao-loop")
             yield ProgressBar(total=1, show_percentage=True, show_eta=False, id="loop-progress")
             yield Static("", id="loop-contadores")
         with VerticalScroll(id="loop-rolagem"):
@@ -101,6 +110,9 @@ class RodarLoopScreen(Vertical):
             self._iniciar_loop()
         elif button_id == "btn-cancelar-loop":
             self._cancelar_loop()
+        elif button_id == "btn-intervencao-loop":
+            self._interativo = not self._interativo
+            event.button.label = ROTULO_INTERATIVA if self._interativo else ROTULO_NAO_INTERATIVA
 
     def _mostrar_status_temporario(self, mensagem: str) -> None:
         """Mensagem para o operador que o progresso não sobrescreve por alguns segundos."""
@@ -122,6 +134,7 @@ class RodarLoopScreen(Vertical):
         self.query_one("#btn-iniciar-loop", Button).disabled = True
         self.query_one("#btn-cancelar-loop", Button).disabled = False
         self.query_one("#input-iteracoes", Input).disabled = True
+        self.query_one("#btn-intervencao-loop", Button).disabled = True
         self._painel.limpar()
         self.query_one("#loop-progress", ProgressBar).update(total=iteracoes, progress=0)
         self.query_one("#loop-contadores", Static).update("")
@@ -146,6 +159,9 @@ class RodarLoopScreen(Vertical):
         if not cancelando and monotonic() >= self._status_fixo_ate:
             status = self.query_one("#loop-status", Static)
             texto = f"{progresso.fase} {progresso.indice_atual}/{progresso.total}"
+            if progresso.fase == "preparando":
+                # Na primeira execução a fila é montada a partir do Postgres (alguns segundos).
+                texto = "preparando a fila..."
             if progresso.familia:
                 # A família só entra se couber: a barra tem uma linha, e em 80 colunas
                 # o texto seria cortado no meio. O bloco da família no painel já a mostra.
@@ -174,7 +190,8 @@ class RodarLoopScreen(Vertical):
                 rule_store=self._rule_store,
                 cancel_event=self._cancel_event,
                 on_progresso=painel.publicar,
-                pedir_intervencao=self._pedir_intervencao,
+                # Não interativo: sem callback, o pipeline escala em vez de abrir a modal.
+                pedir_intervencao=self._pedir_intervencao if self._interativo else None,
                 on_evento_ao_vivo=painel.publicar,
             )
         except Exception as exc:  # noqa: BLE001 — mostra erro sem derrubar a TUI
@@ -186,6 +203,7 @@ class RodarLoopScreen(Vertical):
         self.query_one("#btn-iniciar-loop", Button).disabled = False
         self.query_one("#btn-cancelar-loop", Button).disabled = True
         self.query_one("#input-iteracoes", Input).disabled = False
+        self.query_one("#btn-intervencao-loop", Button).disabled = False
 
     def _mostrar_erro(self, exc: Exception) -> None:
         self._painel.drenar_agora()
@@ -203,5 +221,10 @@ class RodarLoopScreen(Vertical):
             f"Parada: {_MOTIVOS.get(resultado.motivo_parada, resultado.motivo_parada.value)} · "
             f"JSON: {_caminho_curto(resultado.caminho_json)} · "
             f"SQL: {_caminho_curto(resultado.caminho_sql)} (nunca executado)"
+            + (
+                f" · Revisão humana: {resultado.casos_escalados} caso(s) em "
+                f"{_caminho_curto(resultado.caminho_escalados)}"
+                if resultado.caminho_escalados is not None else ""
+            )
         )
         self._reabilitar_controles()

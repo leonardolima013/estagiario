@@ -20,6 +20,7 @@ SELECT
 FROM catalog_part cp
 JOIN manufacturer_brand mb ON mb.id = cp.brand_id
 WHERE cp.search_ref = %(search_ref)s AND cp.brand_id = %(brand_id)s
+    AND cp.lifecycle_status = 'ACTIVE'
 ORDER BY cp.id
 """
 
@@ -60,7 +61,10 @@ class GrupoTruncadoError(RuntimeError):
 
 
 def buscar_grupo(search_ref: str, brand_id: int) -> list[RegistroCatalogPart]:
-    """Busca todos os registros de catalog_part para um search_ref + brand_id."""
+    """Busca os registros ativos de catalog_part para um search_ref + brand_id.
+
+    Só entram peças `ACTIVE`: os perdedores de merges anteriores ficam `INACTIVE`
+    (soft delete do gerar_sql) e não podem voltar a ser mesclados."""
     resultado = consultar_banco(_QUERY, params={"search_ref": search_ref, "brand_id": brand_id})
     if resultado.truncado:
         raise GrupoTruncadoError(

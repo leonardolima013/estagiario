@@ -124,4 +124,4 @@ def test_application_vazia_em_todos_nao_gera_update_de_null(fazer_registro, sem_
     )
 
     assert decisao.valor == ""
-    assert "UPDATE catalog_part SET" not in gerar_sql([merge], [])
+    assert "WHERE id = 1;" not in gerar_sql([merge], [])

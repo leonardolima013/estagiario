@@ -177,6 +177,14 @@ EventoAoVivo = (
 
 @dataclass
 class RegistroIteracao:
+    """Uma iteração do loop.
+
+    Durante a iteração carrega tudo (grupo, resultado, eventos, SQL). Depois de
+    gravada no journal, no SQL e nos escalados, o executor esvazia esses campos
+    com `aliviar`: o `ResultadoLoop` guarda só índice, status, horários, família
+    e erro, e a memória não cresce com o número de iterações.
+    """
+
     indice: int
     status: IteracaoStatus
     iniciada_em: str
@@ -187,6 +195,12 @@ class RegistroIteracao:
     eventos: list[EventoExecucao] = field(default_factory=list)
     sql: str = ""
     erro: dict[str, str] | None = None
+
+    def aliviar(self) -> None:
+        self.grupo = []
+        self.resultado_caso = None
+        self.eventos = []
+        self.sql = ""
 
 
 @dataclass
@@ -200,6 +214,9 @@ class ResultadoLoop:
     finalizada_em: str | None = None
     caminho_json: Path | None = None
     caminho_sql: Path | None = None
+    # `output/escalados_humano/escalados_<run_id>.json`, quando houve caso.
+    caminho_escalados: Path | None = None
+    casos_escalados: int = 0
 
     @property
     def iteracoes_executadas(self) -> int:

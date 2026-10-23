@@ -1,8 +1,11 @@
 """Serialização e checkpoints públicos do loop.
 
-O journal JSONL interno mantém cada iteração incrementalmente. O arquivo JSON
-público é sempre reescrito para um temporário e promovido com `os.replace`,
-portanto cancelamentos e erros não deixam um JSON final truncado.
+O journal JSONL interno (`.loop_<run_id>.jsonl`) recebe cada iteração assim que
+ela termina, em append. O arquivo JSON público só é gerado no fim da execução
+(`finalizar`), a partir do journal e linha a linha, num temporário promovido com
+`os.replace`: nenhuma iteração regrava o que já foi gravado (auditoria de
+memória, A1). Se o processo morrer antes do fim, `recuperar_json_de_journal`
+gera o JSON a partir do journal que ficou.
 """
 
 from __future__ import annotations
@@ -18,6 +21,9 @@ from typing import Any
 from loop.models import (
     EventoExecucao,
     FamiliaSorteada,
+    IteracaoStatus,
+    LoopStatus,
+    MotivoParada,
     RegistroIteracao,
     ResultadoLoop,
 )
@@ -268,13 +274,15 @@ class LoopOutputWriter:
         self._journal.touch()
 
     def registrar_iteracao(self, resultado: ResultadoLoop, iteracao: RegistroIteracao) -> None:
+        """Acrescenta a iteração ao journal. O JSON público só sai em `finalizar`."""
         linha = json.dumps(iteracao_para_json(iteracao), ensure_ascii=False, separators=(",", ":"))
         with self._journal.open("a", encoding="utf-8") as arquivo:
             arquivo.write(linha + "\n")
+            arquivo.flush()
+            os.fsync(arquivo.fileno())
         self._iteracoes_escritas += 1
-        self.checkpoint(resultado)
 
-    def checkpoint(self, resultado: ResultadoLoop) -> None:
+    def checkpoint(self, resultado: ResultadoLoop, extras: dict[str, Any] | None = None) -> None:
         temporario = self.caminho_json.with_suffix(".json.tmp")
         metadata = {
             "schema": "loop_auditoria.v2",
@@ -293,6 +301,7 @@ class LoopOutputWriter:
                     "json": str(self.caminho_json),
                     "sql": str(self.caminho_sql),
                 },
+                **(extras or {}),
             },
         }
         with temporario.open("w", encoding="utf-8") as arquivo:
@@ -344,3 +353,45 @@ class LoopOutputWriter:
         except FileNotFoundError:
             pass
         return self.caminho_json, self.caminho_sql
+
+
+def recuperar_json_de_journal(journal: Path | str) -> Path:
+    """Gera o JSON público de uma execução que parou antes de `finalizar`.
+
+    O journal (`.loop_<run_id>.jsonl`) tem uma linha completa por iteração
+    gravada; o JSON sai ao lado dele, com status `parcial`, motivo `erro_fatal`
+    e `recuperado_de_journal: true`. O journal é mantido.
+    """
+    journal = Path(journal)
+    nome = journal.name
+    if not (nome.startswith(".loop_") and nome.endswith(".jsonl")):
+        raise ValueError(f"não parece um journal do loop: {journal}")
+    run_id = nome[len(".loop_"):-len(".jsonl")]
+    resultado = ResultadoLoop(
+        run_id=run_id,
+        status=LoopStatus.PARCIAL,
+        motivo_parada=MotivoParada.ERRO_FATAL,
+        iteracoes_solicitadas=0,
+        iniciada_em="",
+    )
+    with journal.open("r", encoding="utf-8") as arquivo:
+        for linha in arquivo:
+            if not linha.strip():
+                continue
+            registro = json.loads(linha)
+            resultado.iteracoes.append(
+                RegistroIteracao(
+                    indice=registro["indice"],
+                    status=IteracaoStatus(registro["status"]),
+                    iniciada_em=registro.get("iniciada_em") or "",
+                    finalizada_em=registro.get("finalizada_em"),
+                )
+            )
+            if not resultado.iniciada_em:
+                resultado.iniciada_em = registro.get("iniciada_em") or ""
+            resultado.finalizada_em = registro.get("finalizada_em")
+    resultado.iteracoes_solicitadas = len(resultado.iteracoes)
+    # O construtor só faz touch no journal, que já existe e não é truncado.
+    writer = LoopOutputWriter(journal.parent, run_id)
+    writer.checkpoint(resultado, extras={"recuperado_de_journal": True})
+    return writer.caminho_json

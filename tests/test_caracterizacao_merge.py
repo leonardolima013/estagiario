@@ -98,7 +98,7 @@ def test_caracteriza_escalado_humano_nao_entra_no_update():
 
     script = gerar_sql([decisao], [])
 
-    assert "UPDATE catalog_part SET" not in script
+    assert "WHERE id = 1;" not in script
     assert "-- REVISAR MANUALMENTE: campo ncm" in script
 
 
@@ -114,7 +114,7 @@ def test_caracteriza_multiplos_campos_todos_entram_no_mesmo_update():
     script = gerar_sql([decisao], [])
 
     # todos num único UPDATE SET
-    assert script.count("UPDATE catalog_part SET") == 1
+    assert script.count("WHERE id = 1;") == 1
     assert '"width" = 3.2' in script
     assert "\"ncm\" = '1234'" in script
     assert "\"name\" = 'POLIA DA CORREIA'" in script
@@ -143,7 +143,7 @@ def test_diff_only_omite_campo_cujo_valor_ja_e_o_do_vencedor():
     script = gerar_sql([decisao], [])
 
     assert '"width"' not in script
-    assert "UPDATE catalog_part SET" not in script  # era o único campo
+    assert "WHERE id = 1;" not in script  # era o único campo
 
 
 def test_diff_only_escreve_campo_cujo_valor_difere_do_vencedor():
@@ -171,7 +171,7 @@ def test_diff_only_mistura_campos_iguais_e_diferentes():
 
     assert '"width"' not in script  # igual -> omitido
     assert '"height" = 5.0' in script  # difere -> escrito
-    assert script.count("UPDATE catalog_part SET") == 1
+    assert script.count("WHERE id = 1;") == 1
 
 
 def test_diff_only_sem_snapshot_mantem_comportamento_legado():

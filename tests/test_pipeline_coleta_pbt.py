@@ -650,11 +650,13 @@ class Execucao:
 def _conteudo_rule_store(store: RuleStore | None) -> list[tuple]:
     if store is None:
         return []
-    return [
+    # Ordenado por id: `listar_todas` ordena por `criado_em`, que tem resolução de
+    # segundos, e duas regras do mesmo segundo trocariam de ordem entre execuções.
+    return sorted(
         (r.id, r.categoria, r.campo, r.condicao, r.resolucao, r.grupo_exemplo_ref,
          r.criado_por, r.ativo, r.titulo, r.caso_episodico, r.sinais_busca)
         for r in store.listar_todas()
-    ]
+    )
 
 
 def executar(

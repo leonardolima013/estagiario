@@ -59,7 +59,8 @@ def test_executar_caso_gera_resultado_com_sql(fazer_registro, sem_banco):
     assert len(resultado.particao.subclusters) == 1
     assert len(resultado.decisoes) == 1
     assert isinstance(resultado.decisoes[0], DecisaoMerge)
-    assert "DELETE FROM catalog_part" in resultado.sql
+    assert "UPDATE catalog_part SET \"lifecycle_status\" = 'INACTIVE' WHERE id IN (2);" in resultado.sql
+    assert "DELETE FROM catalog_part " not in resultado.sql
     assert [r.id for r in resultado.grupo] == [1, 2]
 
 

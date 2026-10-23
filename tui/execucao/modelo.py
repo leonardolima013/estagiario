@@ -170,6 +170,7 @@ _AGRUPADORES = frozenset({"montar_decisao_merge", "recuperar_distintos_name"})
 _OCULTOS = frozenset({
     ("observabilidade", "aviso"),           # mesmo texto do AvisoEmitido
     ("loop", "sortear_grupo_aleatorio"),    # o cabeçalho da família já mostra
+    ("loop", "proxima_familia"),            # idem, quando a família vem da fila
     ("loop", "executar_caso"),              # o erro vem completo no IteracaoConcluida
 })
 # Ecos que o pipeline registra depois do merge, sem `entrada`, para a auditoria.
@@ -451,6 +452,7 @@ _ROTULOS = {
     "verificar_nomenclatura_peca": "Verificação web do nome",
     "coletar_paginas": "Coleta de páginas",
     "gerar_sql": "Gerar SQL",
+    "grupo_sem_duplicatas": "Família sem duplicatas (menos de 2 peças ativas)",
     "arbitrar_por_provedor": "Provedor de informação",
     "consultar_memoria": "Memória de intervenções",
     "intervencao_humana": "Intervenção humana",
@@ -527,7 +529,7 @@ def _resumo_merge(evento: EventoExecucao) -> str:
     tipo = evento.saida.get("tipo")
     decisao = evento.saida.get("decisao")
     if tipo == "DecisaoMerge" and isinstance(decisao, Mapping):
-        return f"merge: mantém {decisao.get('vencedor_id')}, remove {_ids(decisao.get('perdedor_ids'))}"
+        return f"merge: mantém {decisao.get('vencedor_id')}, inativa {_ids(decisao.get('perdedor_ids'))}"
     if tipo == "GrupoSinalizado":
         return "sinalizado para revisão"
     return "nada a mesclar"
@@ -900,7 +902,7 @@ def legenda_vencedor(familia: Familia) -> str:
     partes = ["Registro vencedor" if len(finais) == 1 else f"Registros vencedores ({len(finais)} merges)"]
     for registro in finais:
         removidos = _ids(registro.get("ids_removidos"), limite=6)
-        partes.append(f"mantém {registro.get('id_mantido')}" + (f" (remove {removidos})" if removidos else ""))
+        partes.append(f"mantém {registro.get('id_mantido')}" + (f" (inativa {removidos})" if removidos else ""))
     partes.append("valores depois do merge")
     escalados: list[str] = []
     for registro in finais:

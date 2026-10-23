@@ -39,12 +39,24 @@ def _iteracao(indice, status=IteracaoStatus.SUCESSO):
     )
 
 
+def test_registrar_iteracao_so_grava_o_journal(tmp_path):
+    # Decisão 8.2 da auditoria de memória: o JSON público só sai no fim.
+    resultado = _resultado(tmp_path)
+    writer = LoopOutputWriter(tmp_path, resultado.run_id)
+    resultado.iteracoes.append(_iteracao(1))
+    writer.registrar_iteracao(resultado, resultado.iteracoes[-1])
+
+    assert not writer.caminho_json.exists()
+    linhas = writer._journal.read_text(encoding="utf-8").splitlines()
+    assert [json.loads(linha)["indice"] for linha in linhas] == [1]
+
+
 def test_checkpoint_json_e_valido_e_contem_pecas(tmp_path):
     resultado = _resultado(tmp_path)
     writer = LoopOutputWriter(tmp_path, resultado.run_id)
-    writer.checkpoint(resultado)
     resultado.iteracoes.append(_iteracao(1))
     writer.registrar_iteracao(resultado, resultado.iteracoes[-1])
+    writer.checkpoint(resultado)
 
     texto = writer.caminho_json.read_text(encoding="utf-8")
     conteudo = json.loads(texto)
@@ -68,6 +80,7 @@ def test_checkpoint_de_erro_e_serializavel(tmp_path):
     iteracao.erro = {"tipo": "RuntimeError", "mensagem": "falhou"}
     resultado.iteracoes.append(iteracao)
     writer.registrar_iteracao(resultado, iteracao)
+    writer.checkpoint(resultado)
 
     conteudo = json.loads(writer.caminho_json.read_text(encoding="utf-8"))
     assert conteudo["iteracoes"]["1"]["status"] == "erro"

@@ -156,7 +156,7 @@ def test_decisoes_ficam_sob_o_merge_e_campos_sem_conflito_sao_agrupados():
 
     (merge,) = modelo.atual.itens
     agregado, nome, ncm = merge.filhos
-    assert merge.resumo == "merge: mantém 1, remove 2"
+    assert merge.resumo == "merge: mantém 1, inativa 2"
     assert (agregado.titulo, agregado.resumo) == ("3 campo(s) sem conflito", "width, depth, height")
     assert nome.titulo == "name = PIVO SUPERIOR"
     assert nome.resumo == "verificação web · confiança alta"
@@ -508,13 +508,13 @@ def test_legendas_das_tabelas(fazer_registro):
 
     um = _registro_final(fazer_registro)
     familia.registros_finais = (um,)
-    assert legenda_vencedor(familia) == "Registro vencedor · mantém 101 (remove 102) · valores depois do merge"
+    assert legenda_vencedor(familia) == "Registro vencedor · mantém 101 (inativa 102) · valores depois do merge"
 
     escalado = _registro_final(fazer_registro, escalado=True)
     outro = {**um, "id_mantido": 205, "ids_removidos": [206, 207], "campos_escalados": ["gross_weight", "ncm"]}
     familia.registros_finais = (escalado, outro)
     assert legenda_vencedor(familia) == (
-        "Registros vencedores (2 merges) · mantém 101 (remove 102) · mantém 205 (remove 206, 207) · "
+        "Registros vencedores (2 merges) · mantém 101 (inativa 102) · mantém 205 (inativa 206, 207) · "
         "valores depois do merge · revisão humana: gross_weight, ncm"
     )
 

@@ -75,3 +75,9 @@ def test_buscar_grupo_caso_1_citroen():
     grupo = buscar_grupo("83061", brand_id)
     ids = {r.id for r in grupo}
     assert ids == {3161876, 3291920, 3474053, 3896742, 3903224, 4579664, 4579866, 4583782}
+
+
+def test_query_do_grupo_so_traz_pecas_ativas():
+    # Perdedores de merges anteriores ficam INACTIVE (soft delete do gerar_sql)
+    # e não podem voltar a entrar num grupo.
+    assert "cp.lifecycle_status = 'ACTIVE'" in group_fetch._QUERY

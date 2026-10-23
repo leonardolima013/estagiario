@@ -6,6 +6,9 @@ db/estagiario.db
 db/paginas.db
 db/paginas.db-wal
 db/paginas.db-shm
+db/fila_familias.db
+db/fila_familias.db-wal
+db/fila_familias.db-shm
 .pytest_cache/
 output/
 *.md

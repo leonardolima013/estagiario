@@ -148,6 +148,18 @@ def serper_timeout() -> float:
     return min(120.0, max(1.0, valor))
 
 
+def fila_db_path() -> Path:
+    """Caminho do arquivo SQLite da fila de famílias do loop (`loop.fila`).
+
+    Sobrescrevível via ESTAGIARIO_FILA_DB_PATH; por padrão vive em
+    db/fila_familias.db, separado do RuleStore e do armazém de páginas.
+    """
+    override = os.environ.get("ESTAGIARIO_FILA_DB_PATH")
+    if override:
+        return Path(override)
+    return PROJECT_ROOT / "db" / "fila_familias.db"
+
+
 # --- Coleta de páginas (spec html-extract-save) ---
 
 
@@ -289,3 +301,13 @@ def stealth_profile_dir() -> Path:
     if override:
         return Path(override)
     return PROJECT_ROOT / "browserscan" / "chrome-profile"
+
+
+def estoque_responsavel_id() -> int:
+    """Usuário gravado como `responsible_user_id` nas transações de ajuste de
+    estoque que o merge gera (sql_generation/estoque.py).
+
+    Sobrescrevível via ESTAGIARIO_ESTOQUE_RESPONSAVEL_ID; o padrão `8` é o
+    usuário devhubbi, indicado pelo time de banco.
+    """
+    return int(os.environ.get("ESTAGIARIO_ESTOQUE_RESPONSAVEL_ID", "8"))

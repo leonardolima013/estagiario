@@ -22,12 +22,13 @@ def test_merge_completo_segue_a_ordem_esperada():
     posicao_begin = script.index("BEGIN;")
     posicao_update_vencedor = script.index('UPDATE catalog_part SET "width" = 3.2, "name"')
     posicao_update_fk = script.index('UPDATE "catalog_partactivity"')
-    posicao_delete = script.index("DELETE FROM catalog_part")
+    posicao_soft_delete = script.index("UPDATE catalog_part SET \"lifecycle_status\" = 'INACTIVE' WHERE id IN (2);")
     posicao_commit = script.index("COMMIT;")
 
-    assert posicao_begin < posicao_update_vencedor < posicao_update_fk < posicao_delete < posicao_commit
+    assert posicao_begin < posicao_update_vencedor < posicao_update_fk < posicao_soft_delete < posicao_commit
+    assert "DELETE FROM catalog_part " not in script
     assert "WHERE id = 1;" in script
-    assert "IN (2);" in script  # tanto no update de FK quanto no delete
+    assert "IN (2);" in script  # tanto no update de FK quanto no soft delete
 
 
 def test_campo_escalado_vira_comentario_e_nao_entra_no_update():
@@ -43,7 +44,7 @@ def test_campo_escalado_vira_comentario_e_nao_entra_no_update():
     script = gerar_sql([decisao], _DEPENDENCIAS)
 
     assert "-- REVISAR MANUALMENTE: campo width ambíguo — ambíguo" in script
-    assert "UPDATE catalog_part SET" not in script  # único campo era escalado -> nada pra atualizar no vencedor
+    assert "WHERE id = 1;" not in script  # único campo era escalado -> nada pra atualizar no vencedor
 
 
 def test_todos_os_campos_escalados_nao_gera_update_do_vencedor():
@@ -58,8 +59,9 @@ def test_todos_os_campos_escalados_nao_gera_update_do_vencedor():
 
     script = gerar_sql([decisao], [])
 
-    assert "UPDATE catalog_part SET" not in script
-    assert "DELETE FROM catalog_part WHERE id IN (2);" in script
+    assert "WHERE id = 1;" not in script
+    assert "UPDATE catalog_part SET \"lifecycle_status\" = 'INACTIVE' WHERE id IN (2);" in script
+    assert "DELETE FROM catalog_part " not in script
 
 
 def test_campo_escalado_via_verificacao_web_tambem_vira_comentario():
@@ -82,7 +84,7 @@ def test_campo_escalado_via_verificacao_web_tambem_vira_comentario():
     script = gerar_sql([decisao], _DEPENDENCIAS)
 
     assert "-- REVISAR MANUALMENTE: campo name ambíguo — orçamento esgotado" in script
-    assert "UPDATE catalog_part SET" not in script
+    assert "WHERE id = 1;" not in script
     assert '"name" = NULL' not in script
 
 
@@ -105,3 +107,50 @@ def test_multiplas_decisoes_geram_blocos_separados():
     assert script.count("BEGIN;") == 1
     assert "REVISÃO MANUAL: grupo B" in script
     assert script.index("COMMIT;") < script.index("REVISÃO MANUAL: grupo B")
+
+
+def test_com_dealer_stock_consolida_estoque_antes_das_fks_e_recalcula_has_stock_depois():
+    dependencias = [
+        FkDependency(tabela_dependente="dealer_stock", coluna_fk="part_id", nome_constraint="fk_estoque"),
+        FkDependency(tabela_dependente="catalog_partactivity", coluna_fk="part_id", nome_constraint="fk1"),
+    ]
+    decisao = DecisaoMerge(
+        grupo_ref="83061:CITROEN",
+        vencedor_id=1,
+        perdedor_ids=[2],
+        decisoes_campo=[DecisaoCampo(campo="width", valor=3.2, justificativa="x", fonte="sem_conflito")],
+    )
+
+    script = gerar_sql([decisao], dependencias, responsavel_estoque_id=8)
+
+    posicoes = [
+        script.index('UPDATE catalog_part SET "width" = 3.2 WHERE id = 1;'),
+        script.index("CREATE TEMP TABLE estagiario_estoque"),
+        script.index('UPDATE "dealer_stock" SET "part_id" = 1 WHERE "part_id" IN (2) AND "status" = 0;'),
+        script.index('UPDATE "catalog_partactivity" SET "part_id" = 1'),
+        script.index("UPDATE catalog_part p SET has_stock = EXISTS"),
+        script.index("UPDATE catalog_part SET has_stock = false WHERE id IN (2);"),
+        script.index("UPDATE catalog_part SET \"lifecycle_status\" = 'INACTIVE' WHERE id IN (2);"),
+        script.index("COMMIT;"),
+    ]
+    assert posicoes == sorted(posicoes)
+    assert "responsible_user_id=8" in script
+
+
+def test_responsavel_do_estoque_vem_do_config_quando_omitido(monkeypatch):
+    monkeypatch.setenv("ESTAGIARIO_ESTOQUE_RESPONSAVEL_ID", "77")
+    dependencias = [FkDependency(tabela_dependente="dealer_stock", coluna_fk="part_id", nome_constraint="fk")]
+    decisao = DecisaoMerge(grupo_ref="A", vencedor_id=1, perdedor_ids=[2], decisoes_campo=[])
+
+    script = gerar_sql([decisao], dependencias)
+
+    assert "responsible_user_id=77" in script
+
+
+def test_sem_dealer_stock_nao_emite_bloco_de_estoque():
+    decisao = DecisaoMerge(grupo_ref="A", vencedor_id=1, perdedor_ids=[2], decisoes_campo=[])
+
+    script = gerar_sql([decisao], _DEPENDENCIAS)
+
+    assert "estagiario_estoque" not in script
+    assert "has_stock" not in script

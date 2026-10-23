@@ -8,7 +8,7 @@ def test_sql_inclui_contexto_da_iteracao_e_merge():
         status=IteracaoStatus.SUCESSO,
         iniciada_em="a",
         familia=FamiliaSorteada("83061", 1, "CITROEN"),
-        sql="BEGIN;\nDELETE FROM catalog_part WHERE id IN (2);\nCOMMIT;",
+        sql="BEGIN;\nUPDATE catalog_part SET \"lifecycle_status\" = 'INACTIVE' WHERE id IN (2);\nCOMMIT;",
     )
 
     sql = sql_da_iteracao(iteracao, 3)
@@ -17,7 +17,7 @@ def test_sql_inclui_contexto_da_iteracao_e_merge():
     assert "search_ref=83061" in sql
     assert "brand_id=1" in sql
     assert "BEGIN;" in sql
-    assert "DELETE FROM catalog_part" in sql
+    assert "UPDATE catalog_part SET \"lifecycle_status\" = 'INACTIVE' WHERE id IN (2);" in sql
 
 
 def test_sql_de_erro_e_somente_comentario():

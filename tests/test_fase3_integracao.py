@@ -71,8 +71,8 @@ def test_pipeline_completo_gera_sql_sintaticamente_coerente():
 
     for merge in (d for d in decisoes if isinstance(d, DecisaoMerge)):
         assert f"WHERE id = {merge.vencedor_id}" in script or "-- REVISAR MANUALMENTE" in script
-        posicao_delete = script.index("DELETE FROM catalog_part WHERE id IN")
+        posicao_soft_delete = script.index("UPDATE catalog_part SET \"lifecycle_status\" = 'INACTIVE' WHERE id IN")
         for dep in dependencias_fk:
             trecho_update_fk = f'UPDATE "{dep.tabela_dependente}" SET "{dep.coluna_fk}" = {merge.vencedor_id}'
             if trecho_update_fk in script:
-                assert script.index(trecho_update_fk) < posicao_delete
+                assert script.index(trecho_update_fk) < posicao_soft_delete

@@ -63,6 +63,7 @@ def executar_caso(
     cancel_event: SinalCancelamento | None = None,
     integracao_coleta: PortaColeta | None = None,
     fallback_stealth: bool | None = None,
+    reputacao_dominios: bool = False,
 ) -> ResultadoCaso:
     """Roda o pipeline completo para uma família.
 
@@ -79,6 +80,10 @@ def executar_caso(
     vazia → desligado; inválida → desligado com aviso
     ``stealth_configuracao_invalida``). O fallback só é usado quando a coleta é
     de fato chamada e não altera nenhuma decisão do caso.
+
+    ``reputacao_dominios`` liga, com o stealth desligado, a exclusão de
+    domínios cujas 3 últimas buscas urllib falharam (o stealth já faz isso).
+    Também só afeta a coleta, nunca as decisões.
     """
     # Canal_Avisos da coleta é o on_aviso original, não o wrapper ``avisar``
     # (que também grava observabilidade/aviso no trace — Req 5.4, 8.1).
@@ -91,6 +96,7 @@ def executar_caso(
         stealth_efetivo=resolver_stealth_efetivo(
             fallback_stealth, config.coleta_stealth_habilitada()
         ),
+        reputacao_dominios=reputacao_dominios,
     )
 
     def avisar(mensagem: str) -> None:
@@ -123,6 +129,22 @@ def executar_caso(
     grupo_ref = f"{search_ref}:{grupo[0].brand}" if grupo else f"{search_ref}:{brand_id}"
     # Só ao vivo (tabela de registros da "Rodar loop"); não entra no trace auditável.
     sinalizar_grupo(trace, grupo_ref, grupo)
+
+    if len(grupo) < 2:
+        # A fila do loop é uma foto (loop.fila): uma família pode ter deixado de ser
+        # duplicada depois da montagem. Com menos de duas peças ativas não há o que
+        # particionar nem mesclar, e o LLM não é chamado.
+        if trace is not None:
+            trace.registrar(
+                "pipeline", "grupo_sem_duplicatas",
+                entrada={"search_ref": search_ref, "brand_id": brand_id},
+                saida={"quantidade": len(grupo), "motivo": "menos de duas peças ativas"},
+            )
+        return ResultadoCaso(
+            grupo_ref=grupo_ref,
+            particao=Particao(grupo_ref=grupo_ref, subclusters=[]),
+            decisoes=[], sql="", grupo=grupo,
+        )
 
     inicio = perf_counter()
     sinalizar_inicio(trace, "tool", "particionar_grupo", {"grupo_ref": grupo_ref, "pecas": len(grupo)})

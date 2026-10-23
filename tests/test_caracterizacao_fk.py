@@ -30,7 +30,7 @@ def test_par_tabela_coluna_repetido_agora_deduplicado():
     assert len(statements) == 1
 
 
-def test_caracteriza_ordem_update_vencedor_fk_delete_dentro_da_transacao():
+def test_caracteriza_ordem_update_vencedor_fk_soft_delete_dentro_da_transacao():
     decisao = DecisaoMerge(
         grupo_ref="83061:CITROEN",
         vencedor_id=1,
@@ -42,16 +42,16 @@ def test_caracteriza_ordem_update_vencedor_fk_delete_dentro_da_transacao():
     script = gerar_sql([decisao], dependencias)
 
     pos_begin = script.index("BEGIN;")
-    pos_update_vencedor = script.index("UPDATE catalog_part SET")
+    pos_update_vencedor = script.index("UPDATE catalog_part SET \"width\"")
     pos_update_fk = script.index('UPDATE "catalog_partactivity"')
-    pos_delete = script.index("DELETE FROM catalog_part")
+    pos_soft_delete = script.index("UPDATE catalog_part SET \"lifecycle_status\" = 'INACTIVE'")
     pos_commit = script.index("COMMIT;")
 
-    assert pos_begin < pos_update_vencedor < pos_update_fk < pos_delete < pos_commit
+    assert pos_begin < pos_update_vencedor < pos_update_fk < pos_soft_delete < pos_commit
 
 
 def test_caracteriza_fk_updates_presentes_mesmo_sem_update_do_vencedor():
-    # Todos os campos escalados -> sem UPDATE do vencedor, mas FK + DELETE seguem.
+    # Todos os campos escalados -> sem UPDATE do vencedor, mas FK + soft delete seguem.
     decisao = DecisaoMerge(
         grupo_ref="83061:CITROEN",
         vencedor_id=1,
@@ -64,6 +64,6 @@ def test_caracteriza_fk_updates_presentes_mesmo_sem_update_do_vencedor():
 
     script = gerar_sql([decisao], dependencias)
 
-    assert "UPDATE catalog_part SET" not in script
+    assert "WHERE id = 1;" not in script
     assert 'UPDATE "t" SET "c" = 1 WHERE "c" IN (2);' in script
-    assert "DELETE FROM catalog_part WHERE id IN (2);" in script
+    assert "UPDATE catalog_part SET \"lifecycle_status\" = 'INACTIVE' WHERE id IN (2);" in script

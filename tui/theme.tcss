@@ -293,6 +293,18 @@ IntervencaoScreen {
     height: 1;
 }
 
+#loop-linha-progresso Button {
+    height: 1;
+    min-width: 6;
+    border: none;
+    padding: 0 1;
+    margin: 0 1 0 0;
+}
+
+#loop-linha-progresso Button:disabled {
+    opacity: 50%;
+}
+
 #loop-progress {
     width: 1fr;
 }

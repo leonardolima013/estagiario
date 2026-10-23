@@ -399,7 +399,7 @@ async def test_tabelas_de_registros_ficam_visiveis_com_a_familia_recolhida(tmp_p
         assert sorteados.max_scroll_y == 0, "as 4 linhas cabem sem rolagem vertical"
 
         legenda = primeira.query_one(".familia-vencedor > .tabela-legenda", Static)
-        assert str(legenda.renderable) == "Registro vencedor · mantém 101 (remove 102) · valores depois do merge"
+        assert str(legenda.renderable) == "Registro vencedor · mantém 101 (inativa 102) · valores depois do merge"
         vencedor = primeira.query_one(".tabela-vencedor", DataTable)
         colunas = _colunas(vencedor)
         assert colunas == [*COLUNAS_SORTEADOS, "search_ref", "brand", "brand_id", "created", "application"]

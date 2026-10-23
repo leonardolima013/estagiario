@@ -408,6 +408,9 @@ class IntegracaoColeta:
         # coletores fake sem esse parâmetro funcionando (Req 1.5, 10.1).
         if contexto.stealth_efetivo == "habilitada":
             kwargs["stealth"] = True
+        elif contexto.reputacao_dominios:
+            # Mesma regra: só vai ao coletor quando ligada.
+            kwargs["reputacao"] = True
 
         relatorio = coletor.coletar(
             peca,

@@ -1,4 +1,11 @@
-"""Saída SQL acumulada do loop — revisável, nunca executada automaticamente."""
+"""Saída SQL acumulada do loop — revisável, nunca executada automaticamente.
+
+O loop grava com `EscritorSqlLoop`: cada iteração acrescenta só o próprio bloco
+ao arquivo (com `fsync`), sem remontar nem regravar o que já foi escrito. O
+conteúdo final é idêntico ao de `gerar_sql_loop` sobre as mesmas iterações. Um
+bloco cortado por uma queda no meio da escrita fica sem `COMMIT;` e não é
+aplicado parcialmente (cada merge tem a própria transação).
+"""
 
 from __future__ import annotations
 
@@ -43,3 +50,34 @@ def salvar_sql_atomico(caminho: Path, conteudo: str) -> None:
     temporario = caminho.with_suffix(caminho.suffix + ".tmp")
     temporario.write_text(conteudo, encoding="utf-8")
     os.replace(temporario, caminho)
+
+
+class EscritorSqlLoop:
+    """Escreve o SQL do loop em append, uma iteração por vez."""
+
+    def __init__(self, caminho: Path, total: int) -> None:
+        self.caminho = Path(caminho)
+        self.caminho.parent.mkdir(parents=True, exist_ok=True)
+        self._total = total
+        self._blocos = 0
+        self.caminho.write_text("", encoding="utf-8")
+
+    @property
+    def blocos(self) -> int:
+        return self._blocos
+
+    def registrar(self, iteracao: RegistroIteracao) -> None:
+        bloco = sql_da_iteracao(iteracao, self._total)
+        # Mesmo resultado de gerar_sql_loop: blocos separados por linha em branco
+        # e uma quebra de linha no fim.
+        texto = ("\n" if self._blocos else "") + bloco + "\n"
+        with self.caminho.open("a", encoding="utf-8") as arquivo:
+            arquivo.write(texto)
+            arquivo.flush()
+            os.fsync(arquivo.fileno())
+        self._blocos += 1
+
+    def finalizar(self) -> Path:
+        if not self._blocos:
+            self.caminho.write_text(gerar_sql_loop([], self._total), encoding="utf-8")
+        return self.caminho

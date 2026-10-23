@@ -4,23 +4,45 @@ e rodar quando/como decidir (SPEC.md §9).
 
 Ordem dentro de cada merge, cada um na sua própria transação (uma falha isolada não
 derruba os outros merges do script): UPDATE do vencedor -> UPDATEs de realocação de
-FK (SPEC.md §4.3) -> DELETE dos perdedores.
+FK (SPEC.md §4.3) -> inativação dos perdedores.
+
+Os perdedores não são apagados de catalog_part: viram soft delete, com
+`lifecycle_status = 'INACTIVE'` (decisão do usuário, 2026-10-21). Os DELETEs de
+deduplicação nas tabelas dependentes (fk_migration) continuam.
+
+Com `dealer_stock` entre as dependências, cada merge também consolida os
+estoques que colidiriam no mesmo fornecedor (sql_generation/estoque.py): antes
+da migração de FK, que só move estoques ativos, e com o `has_stock` das peças
+recalculado depois dela.
 """
 
 from __future__ import annotations
 
 from psycopg import sql
 
+import config
+from sql_generation.estoque import (
+    FILTRO_ESTOQUE_MOVIVEL,
+    TABELA_ESTOQUE,
+    gerar_consolidacao_estoque,
+    gerar_recalculo_has_stock,
+)
 from sql_generation.fk_migration import gerar_updates_fk
 from sql_generation.models import DecisaoMerge, GrupoSinalizado
 from tools.fk_introspection import FkDependency
+
+STATUS_INATIVO = "INACTIVE"
 
 
 def _bloco_sinalizado(grupo: GrupoSinalizado) -> str:
     return f"-- REVISÃO MANUAL: grupo {grupo.grupo_ref} não mesclado automaticamente — {grupo.motivo}"
 
 
-def _bloco_merge(decisao: DecisaoMerge, dependencias_fk: list[FkDependency]) -> str:
+def _bloco_merge(
+    decisao: DecisaoMerge,
+    dependencias_fk: list[FkDependency],
+    responsavel_estoque_id: int,
+) -> str:
     linhas = [f"-- Grupo {decisao.grupo_ref}: merge {decisao.perdedor_ids} -> {decisao.vencedor_id}", "BEGIN;"]
 
     _SEM_SNAPSHOT = object()
@@ -48,12 +70,26 @@ def _bloco_merge(decisao: DecisaoMerge, dependencias_fk: list[FkDependency]) -> 
         )
         linhas.append(update_vencedor.as_string(None))
 
-    linhas.extend(gerar_updates_fk(dependencias_fk, decisao.vencedor_id, decisao.perdedor_ids))
-
-    delete_perdedores = sql.SQL("DELETE FROM catalog_part WHERE id IN ({perdedores});").format(
-        perdedores=sql.SQL(", ").join(sql.Literal(pid) for pid in decisao.perdedor_ids)
+    com_estoque = any(dep.tabela_dependente == TABELA_ESTOQUE for dep in dependencias_fk)
+    if com_estoque:
+        linhas.extend(gerar_consolidacao_estoque(decisao.vencedor_id, decisao.perdedor_ids, responsavel_estoque_id))
+    linhas.extend(
+        gerar_updates_fk(
+            dependencias_fk,
+            decisao.vencedor_id,
+            decisao.perdedor_ids,
+            filtros_extras={TABELA_ESTOQUE: FILTRO_ESTOQUE_MOVIVEL} if com_estoque else None,
+        )
     )
-    linhas.append(delete_perdedores.as_string(None))
+    if com_estoque:
+        linhas.extend(gerar_recalculo_has_stock(decisao.vencedor_id, decisao.perdedor_ids))
+
+    inativar_perdedores = sql.SQL("UPDATE catalog_part SET {coluna} = {status} WHERE id IN ({perdedores});").format(
+        coluna=sql.Identifier("lifecycle_status"),
+        status=sql.Literal(STATUS_INATIVO),
+        perdedores=sql.SQL(", ").join(sql.Literal(pid) for pid in decisao.perdedor_ids),
+    )
+    linhas.append(inativar_perdedores.as_string(None))
     linhas.append("COMMIT;")
 
     return "\n".join(linhas)
@@ -62,11 +98,15 @@ def _bloco_merge(decisao: DecisaoMerge, dependencias_fk: list[FkDependency]) -> 
 def gerar_sql(
     decisoes: list[DecisaoMerge | GrupoSinalizado],
     dependencias_fk: list[FkDependency],
+    *,
+    responsavel_estoque_id: int | None = None,
 ) -> str:
+    if responsavel_estoque_id is None:
+        responsavel_estoque_id = config.estoque_responsavel_id()
     blocos = []
     for decisao in decisoes:
         if isinstance(decisao, GrupoSinalizado):
             blocos.append(_bloco_sinalizado(decisao))
         else:
-            blocos.append(_bloco_merge(decisao, dependencias_fk))
+            blocos.append(_bloco_merge(decisao, dependencias_fk, responsavel_estoque_id))
     return "\n\n".join(blocos) + "\n"

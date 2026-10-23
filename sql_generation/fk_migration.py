@@ -22,6 +22,7 @@ def gerar_updates_fk(
     dependencias: list[FkDependency],
     vencedor_id: int,
     perdedor_ids: list[int],
+    filtros_extras: dict[str, sql.Composable] | None = None,
 ) -> list[str]:
     """Uma UPDATE por (tabela, coluna) FK, redirecionando FKs dos perdedores pro vencedor.
 
@@ -29,7 +30,12 @@ def gerar_updates_fk(
     aparição (F-06): duas constraints distintas na mesma coluna gerariam UPDATEs
     idênticas — uma só basta. Antes do primeiro UPDATE de uma tabela, emite um
     DELETE de deduplicação por índice único que contenha alguma coluna de FK.
+
+    `filtros_extras` acrescenta uma condição (`AND ...`) ao UPDATE da tabela
+    indicada, para deixar no perdedor linhas que não devem ir pro vencedor
+    (ex.: estoques consolidados, ver sql_generation/estoque.py).
     """
+    filtros_extras = filtros_extras or {}
     colunas_fk_por_tabela: dict[str, list[str]] = {}
     indices_por_tabela: dict[str, dict[str, IndiceUnico]] = {}
     for dep in dependencias:
@@ -60,11 +66,13 @@ def gerar_updates_fk(
                         perdedor_ids,
                     )
                 )
-        statement = sql.SQL("UPDATE {tabela} SET {coluna} = {vencedor} WHERE {coluna} IN ({perdedores});").format(
+        filtro = filtros_extras.get(dep.tabela_dependente)
+        statement = sql.SQL("UPDATE {tabela} SET {coluna} = {vencedor} WHERE {coluna} IN ({perdedores}){filtro};").format(
             tabela=sql.Identifier(dep.tabela_dependente),
             coluna=sql.Identifier(dep.coluna_fk),
             vencedor=sql.Literal(vencedor_id),
             perdedores=_lista(perdedor_ids),
+            filtro=sql.SQL(" AND {}").format(filtro) if filtro is not None else sql.SQL(""),
         )
         statements.append(statement.as_string(None))
     return statements
