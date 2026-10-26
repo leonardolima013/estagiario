@@ -4,7 +4,8 @@ e rodar quando/como decidir (SPEC.md §9).
 
 Ordem dentro de cada merge, cada um na sua própria transação (uma falha isolada não
 derruba os outros merges do script): UPDATE do vencedor -> UPDATEs de realocação de
-FK (SPEC.md §4.3) -> inativação dos perdedores.
+FK (SPEC.md §4.3) -> inativação dos perdedores -> `updated` das peças e registros
+em `catalog_partactivity` (sql_generation/atividade.py).
 
 Os perdedores não são apagados de catalog_part: viram soft delete, com
 `lifecycle_status = 'INACTIVE'` (decisão do usuário, 2026-10-21). Os DELETEs de
@@ -21,6 +22,7 @@ from __future__ import annotations
 from psycopg import sql
 
 import config
+from sql_generation.atividade import gerar_atividades_merge, gerar_atualizacao_updated
 from sql_generation.estoque import (
     FILTRO_ESTOQUE_MOVIVEL,
     TABELA_ESTOQUE,
@@ -42,6 +44,7 @@ def _bloco_merge(
     decisao: DecisaoMerge,
     dependencias_fk: list[FkDependency],
     responsavel_estoque_id: int,
+    autor_atividade_id: int,
 ) -> str:
     linhas = [f"-- Grupo {decisao.grupo_ref}: merge {decisao.perdedor_ids} -> {decisao.vencedor_id}", "BEGIN;"]
 
@@ -90,6 +93,10 @@ def _bloco_merge(
         perdedores=sql.SQL(", ").join(sql.Literal(pid) for pid in decisao.perdedor_ids),
     )
     linhas.append(inativar_perdedores.as_string(None))
+    linhas.append(gerar_atualizacao_updated(decisao.vencedor_id, decisao.perdedor_ids))
+    linhas.append(
+        gerar_atividades_merge(decisao.vencedor_id, decisao.perdedor_ids, STATUS_INATIVO, autor_atividade_id)
+    )
     linhas.append("COMMIT;")
 
     return "\n".join(linhas)
@@ -100,13 +107,16 @@ def gerar_sql(
     dependencias_fk: list[FkDependency],
     *,
     responsavel_estoque_id: int | None = None,
+    autor_atividade_id: int | None = None,
 ) -> str:
     if responsavel_estoque_id is None:
         responsavel_estoque_id = config.estoque_responsavel_id()
+    if autor_atividade_id is None:
+        autor_atividade_id = config.atividade_autor_id()
     blocos = []
     for decisao in decisoes:
         if isinstance(decisao, GrupoSinalizado):
             blocos.append(_bloco_sinalizado(decisao))
         else:
-            blocos.append(_bloco_merge(decisao, dependencias_fk, responsavel_estoque_id))
+            blocos.append(_bloco_merge(decisao, dependencias_fk, responsavel_estoque_id, autor_atividade_id))
     return "\n\n".join(blocos) + "\n"

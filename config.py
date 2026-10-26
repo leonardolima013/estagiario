@@ -311,3 +311,13 @@ def estoque_responsavel_id() -> int:
     usuário devhubbi, indicado pelo time de banco.
     """
     return int(os.environ.get("ESTAGIARIO_ESTOQUE_RESPONSAVEL_ID", "8"))
+
+
+def atividade_autor_id() -> int:
+    """Usuário gravado como `author_id` nos registros de `catalog_partactivity`
+    que o merge gera (sql_generation/atividade.py).
+
+    Sobrescrevível via ESTAGIARIO_ATIVIDADE_AUTOR_ID; o padrão `8` é o mesmo
+    usuário devhubbi das transações de estoque.
+    """
+    return int(os.environ.get("ESTAGIARIO_ATIVIDADE_AUTOR_ID", "8"))

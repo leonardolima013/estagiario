@@ -154,3 +154,39 @@ def test_sem_dealer_stock_nao_emite_bloco_de_estoque():
 
     assert "estagiario_estoque" not in script
     assert "has_stock" not in script
+
+
+def test_merge_marca_updated_e_grava_atividades_depois_da_migracao_de_fk():
+    decisao = DecisaoMerge(grupo_ref="A", vencedor_id=1, perdedor_ids=[2, 3], decisoes_campo=[])
+
+    script = gerar_sql([decisao], _DEPENDENCIAS, autor_atividade_id=8)
+
+    posicoes = [
+        script.index('UPDATE "catalog_partactivity" SET "part_id" = 1'),
+        script.index("UPDATE catalog_part SET \"lifecycle_status\" = 'INACTIVE' WHERE id IN (2, 3);"),
+        script.index('UPDATE catalog_part SET "updated" = now() WHERE id IN (1, 2, 3);'),
+        script.index("INSERT INTO catalog_partactivity"),
+        script.index("COMMIT;"),
+    ]
+    assert posicoes == sorted(posicoes)
+    assert "(2, 'UPD', 'lifecycle_status', 'ACTIVE', 'INACTIVE', now(), 8)" in script
+    assert "(3, 'UPD', 'lifecycle_status', 'ACTIVE', 'INACTIVE', now(), 8)" in script
+    assert "(2, 'UPD', 'merged_into', NULL, '1', now(), 8)" in script
+    assert "(3, 'UPD', 'merged_into', NULL, '1', now(), 8)" in script
+    assert "(1, 'UPD', 'merge', NULL, 'Unificação de duplicatas (IDs mesclados: [2, 3])', now(), 8)" in script
+
+
+def test_autor_da_atividade_vem_do_config_quando_omitido(monkeypatch):
+    monkeypatch.setenv("ESTAGIARIO_ATIVIDADE_AUTOR_ID", "77")
+    decisao = DecisaoMerge(grupo_ref="A", vencedor_id=1, perdedor_ids=[2], decisoes_campo=[])
+
+    script = gerar_sql([decisao], [])
+
+    assert "'ACTIVE', 'INACTIVE', now(), 77)" in script
+
+
+def test_grupo_sinalizado_nao_grava_atividade_nem_updated():
+    script = gerar_sql([GrupoSinalizado(grupo_ref="B", motivo="x")], [])
+
+    assert "catalog_partactivity" not in script
+    assert '"updated"' not in script
